@@ -1,0 +1,53 @@
+# Прод-раскладка на сервере Dokploy (вне приложений Dokploy, отдельный compose-проект):
+#   /opt/psy-whisper/docker-compose.yml  <- этот файл
+#   /opt/psy-whisper/src/                <- Dockerfile, app.py, requirements.txt
+#   /opt/psy-whisper/data/               <- общий каталог медиа (inbox/, audio/)
+#   /opt/psy-whisper/.env                <- WHISPER_TOKEN=... (chmod 600, в git не класть)
+#
+# Контейнер живёт постоянно: после WHISPER_IDLE_UNLOAD_SEC простоя модель
+# выгружается из RAM, процесс остаётся. У n8n нет docker.sock и SSH к хосту,
+# поэтому "запуск по требованию" ему недоступен.
+# Порт наружу не публикуется. n8n обращается по имени: http://psy-whisper:8080
+name: psy-whisper
+
+services:
+  whisper:
+    build: ./src
+    image: psy-whisper:local
+    container_name: psy-whisper
+    hostname: psy-whisper
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      WHISPER_MODEL: large-v3-turbo
+      WHISPER_COMPUTE_TYPE: int8
+      WHISPER_CPU_THREADS: "8"
+      OMP_NUM_THREADS: "8"
+      WHISPER_IDLE_EXIT_SEC: "0"
+      WHISPER_IDLE_UNLOAD_SEC: "900"
+      WHISPER_MIN_FREE_MB: "3072"
+      DATA_DIR: /data
+      WHISPER_CACHE_DIR: /models
+      HF_HUB_CACHE: /models
+      HF_HUB_DISABLE_TELEMETRY: "1"
+    volumes:
+      - whisper-models:/models
+      - /opt/psy-whisper/data:/data
+    networks:
+      n8n:
+        aliases: [psy-whisper]
+    cpus: 7
+    mem_limit: 4g
+    memswap_limit: 4g
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
+volumes:
+  whisper-models:
+    name: psy-whisper-models
+
+networks:
+  n8n:
+    name: myn8n-n8n-iucjks
+    external: true

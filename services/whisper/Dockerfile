@@ -14,7 +14,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     HF_HUB_CACHE=/models \
     HF_HUB_DISABLE_TELEMETRY=1 \
     OMP_NUM_THREADS=8 \
-    WHISPER_IDLE_EXIT_SEC=900
+    WHISPER_IDLE_EXIT_SEC=0 \
+    WHISPER_IDLE_UNLOAD_SEC=900
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \
