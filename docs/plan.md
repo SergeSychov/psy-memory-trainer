@@ -1,6 +1,6 @@
 # План реализации: тренажёр памяти для курса психологии
 
-Статус: предложение фазы 1 для владельца (Сергей). Это каркас, не выполненная реализация. Workflow в n8n и миграции базы появляются после явного approve. Миграции на проде — отдельным подтверждением. Исходные рамки — в [kickoff_prompt.md](kickoff_prompt.md).
+Статус: фаза 1 одобрена владельцем. Реализация идёт частями. В репозитории уже есть сервис распознавания (`services/whisper`, ffmpeg внутри образа — в n8n его нет), расчёт FSRS и промпты вопросов. Миграция `0001_init.sql` и workflow n8n — отдельные изменения и этим шагом не затрагиваются. Миграции на проде по-прежнему требуют отдельного подтверждения. Исходные рамки — в [kickoff_prompt.md](kickoff_prompt.md).
 
 Студентка — Наталья. Материалы курса лежат в [папке Google Drive](https://drive.google.com/drive/folders/1FwTgobJc50F4vTe0dxNOaZZTw7QdGnJP). Репозиторий публичный, поэтому видео, аудио, транскрипты и конспекты лекций в git не входят.
 
@@ -12,7 +12,7 @@
 2. **Консолидация.** Пауза после учёбы, затем смешанный квиз 3–4 тем. Озвучка в машине с паузой «дальше» — фаза 2. В MVP её нет, схема под неё не закрывается.
 3. **Интервальные повторения (FSRS)** и короткое вечернее напоминание про сон.
 
-Цепочка одной лекции: файл в облаке → job n8n → ffmpeg (mono 16 kHz) → faster-whisper → транскрипт в Postgres → конспект дешёвой LLM по [prompts/konspekt_v1.md](../prompts/konspekt_v1.md) → термины и MCQ → карточки FSRS → Telegram.
+Цепочка одной лекции: файл в облаке → job n8n → сервис whisper (`POST /extract-audio`: ffmpeg mono 16 kHz opus, затем `POST /transcribe`) → транскрипт в Postgres → конспект дешёвой LLM по [prompts/konspekt_v1.md](../prompts/konspekt_v1.md) → термины и MCQ → карточки FSRS → Telegram.
 
 ## Архитектура
 
@@ -20,16 +20,14 @@
 flowchart TD
   drive["Облачная папка<br/>Google Drive"]
   n8n["n8n на Dokploy"]
-  ffmpeg["ffmpeg<br/>mono 16 kHz opus"]
-  whisper["faster-whisper<br/>POST /transcribe"]
+  whisper["whisper-сервис<br/>/extract-audio и /transcribe<br/>ffmpeg + faster-whisper"]
   llm["Дешёвая LLM<br/>DeepSeek flash / gpt-4o-mini"]
   db[("Postgres / Supabase<br/>+ pgvector")]
   fsrs["fsrs/<br/>расчёт due"]
   tg["Telegram-бот"]
 
   drive --> n8n
-  n8n --> ffmpeg
-  ffmpeg --> whisper
+  n8n --> whisper
   db -->|"initial_prompt из глоссария"| whisper
   whisper -->|"транскрипт и сегменты"| db
   db --> llm
@@ -65,7 +63,7 @@ flowchart TD
 | Промпты | `prompts/` | `konspekt_v1.md` уже лежит. Остальные — после approve |
 | Workflow | `workflows/` | JSON n8n и контракт каждого узла |
 | Миграции | `db/migrations/` | В kickoff путь `sql/migrations`. Канон репозитория — этот |
-| Whisper | `services/whisper/` | Dockerfile и `POST /transcribe` — в фазе реализации |
+| Whisper | `services/whisper/` | Образ с ffmpeg и faster-whisper: `POST /extract-audio`, `POST /transcribe`, `GET /health` |
 | Бот | `bot/` | В kickoff путь `services/bot`. Канон репозитория — этот |
 | FSRS | `fsrs/` | Расчёт due |
 | Фикстуры | `tests/fixtures/` | Регрессия. Реальные лекции — `tests/fixtures/private/` (в git только README). В kickoff путь `fixtures/lecture39` |
@@ -235,7 +233,7 @@ flowchart TD
 | Имя | Триггер | Вход | Результат |
 |---|---|---|---|
 | `psy_01_ingest_cloud_folder` | cron или триггер папки | новый файл в папке курса | `lectures.status = queued`, строка в `jobs` |
-| `psy_02_extract_audio` | завершение шага 01 | `lecture_id`, файл в `data/` | opus mono 16 kHz |
+| `psy_02_extract_audio` | завершение шага 01 | `lecture_id`, файл в `data/` | `POST /extract-audio` сервиса whisper → opus mono 16 kHz. В n8n ffmpeg нет |
 | `psy_03_transcribe` | завершение шага 02 | opus и `initial_prompt` из `glossary_terms` | `lecture_texts.transcript`, строки `chunks` |
 | `psy_04_konspekt` | завершение шага 03 | блоки `МЕТАДАННЫЕ`, `ГЛОССАРИЙ`, `ТРАНСКРИПТ` | `lecture_texts.konspekt_md`, строка `llm_usage` |
 | `psy_05_terms_and_questions` | завершение шага 04 | конспект, транскрипт, глоссарий | термины, подтемы, не меньше 10 MCQ на подтему |
@@ -253,10 +251,10 @@ flowchart TD
 | Файл | Фаза |
 |---|---|
 | `prompts/konspekt_v1.md` | есть. System prompt — раздел «Текст system prompt» внутри файла. В kickoff имя `prompts/konspekt.md.sys` |
-| `prompts/extract_terms.md` | 1, после approve |
-| `prompts/gen_questions.md` | 1, после approve. Вопросы из жизни привязаны к термину этой лекции |
-| `prompts/explain_miss.md` | 1, после approve |
-| `prompts/consolidate_quiz.md` | 2, смешанный квиз 3–4 тем |
+| `prompts/extract_terms.md` | 1, файл в репозитории |
+| `prompts/gen_questions.md` | 1, файл в репозитории. Вопросы из жизни привязаны к термину этой лекции |
+| `prompts/explain_miss.md` | 1, файл в репозитории |
+| `prompts/consolidate_quiz.md` | текст промпта в репозитории; workflow смешанного квиза остаётся фазой 2 |
 
 Вход конспекта всегда один: `МЕТАДАННЫЕ` + `ГЛОССАРИЙ` + `ТРАНСКРИПТ` этой лекции. Модель не подмешивает другие лекции цикла.
 
@@ -273,7 +271,7 @@ flowchart TD
 | # | Критерий |
 |---|---|
 | 1 | Новый файл в облачной папке создаёт job в n8n. Размер — любой, который держит диск |
-| 2 | ffmpeg делает mono 16 kHz. Whisper вызывается с `initial_prompt` из глоссария курса |
+| 2 | Сервис whisper: ffmpeg делает mono 16 kHz, `/transcribe` вызывается с `initial_prompt` из глоссария курса |
 | 3 | Транскрипт сохранён. Конспект собран по `prompts/konspekt_v1.md` из метаданных, глоссария и транскрипта |
 | 4 | Термины и не меньше 10 жизненных MCQ на подтему лежат в Postgres |
 | 5 | По вопросам созданы карточки FSRS. Утренний cron шлёт due-карточки в Telegram |
@@ -318,7 +316,7 @@ flowchart TD
 ## Порядок работы фазы 1
 
 1. Аудит: репозиторий, `AGENTS.md`, `.cursor/rules` (если появятся), живые workflow n8n, их контракты, Dokploy, какая именно база. На этом шаге ничего не менять.
-2. Поправить этот план фактами аудита: реальные имена workflow, схема базы, есть ли ffmpeg на хосте. Остановиться и ждать approve.
+2. Поправить этот план фактами аудита: реальные имена workflow, схема базы. Нарезку аудио делает сервис whisper: в n8n ffmpeg нет.
 3. После approve: миграция на не-продовой базе или явная транзакция, сервис Whisper, экспорт workflow в `workflows/`. Прод — отдельное подтверждение.
 4. Конец каждого шага — короткий чеклист: сделано, проверить, дальше.
 
