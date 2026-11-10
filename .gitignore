@@ -1,0 +1,35 @@
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*credentials*.json
+*service-account*.json
+
+# Lecture media (any path)
+*.mp4
+*.mov
+*.mkv
+*.wav
+*.opus
+*.mp3
+*.m4a
+
+# Real lecture transcripts and konspekts.
+# The production system prompt prompts/konspekt_v1.md stays tracked.
+data/**
+!data/README.md
+tests/fixtures/private/**
+!tests/fixtures/private/README.md
+fixtures/lecture39/
+**/transcript.txt
+**/konspekt_v2.md
+**/transcribe_meta.json
+
+# Local tooling
+.DS_Store
+.venv/
+__pycache__/
+*.pyc
+node_modules/
