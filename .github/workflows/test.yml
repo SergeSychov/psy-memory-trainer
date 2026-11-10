@@ -1,0 +1,31 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  node:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: node --test fsrs/fsrs.test.js prompts/prompts.test.js
+
+  whisper:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: system packages
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg espeak-ng
+      - name: python packages
+        run: python -m pip install -r services/whisper/requirements.txt -r services/whisper/requirements-dev.txt
+      - name: pytest
+        env:
+          HF_HUB_DISABLE_TELEMETRY: "1"
+        run: python -m pytest services/whisper/tests -q

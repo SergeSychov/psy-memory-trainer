@@ -1,0 +1,40 @@
+# Локальный и Dokploy-пример. Контейнер не должен висеть: после простоя
+# процесс сам завершается (WHISPER_IDLE_EXIT_SEC), restart оставляем "no",
+# иначе Docker поднимет его снова и RAM не освободится.
+# Веса лежат в volume whisper-models и переживают остановку.
+#
+# n8n и этот сервис монтируют один и тот же каталог в /data.
+# Порт наружу не публикуйте. Строка 127.0.0.1 — только смоук с той же машины.
+# В Dokploy уберите ports и подключите сервис к сети n8n.
+# Лимит памяти задайте в UI Dokploy, если блок deploy он не подхватывает.
+
+services:
+  whisper:
+    build: .
+    image: psy-whisper:local
+    container_name: psy-whisper
+    restart: "no"
+    environment:
+      WHISPER_MODEL: ${WHISPER_MODEL:-large-v3-turbo}
+      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-int8}
+      WHISPER_CPU_THREADS: ${WHISPER_CPU_THREADS:-8}
+      WHISPER_CACHE_DIR: /models
+      DATA_DIR: /data
+      HF_HUB_CACHE: /models
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      OMP_NUM_THREADS: ${WHISPER_CPU_THREADS:-8}
+      WHISPER_IDLE_EXIT_SEC: ${WHISPER_IDLE_EXIT_SEC:-900}
+      WHISPER_TOKEN: ${WHISPER_TOKEN:-}
+    volumes:
+      - whisper-models:/models
+      - ${DATA_DIR_HOST:-../../data}:/data
+    ports:
+      - "127.0.0.1:${WHISPER_PORT:-8080}:8080"
+    deploy:
+      resources:
+        limits:
+          cpus: "8"
+          memory: 5G
+
+volumes:
+  whisper-models:
