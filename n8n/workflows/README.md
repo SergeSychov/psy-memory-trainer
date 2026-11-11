@@ -38,10 +38,55 @@ JSON-экспорт и `.id` файлы. Деплой: `python3 n8n/scripts/pull
 |---|---|
 | Триггеры | `In — Manual`, `In — Execute` |
 | Credentials | `psy Supabase (psy_n8n)`, `psy Whisper token` |
-| Идемпотентность | claim; upsert `lecture_texts` / `chunks` по ключам |
+| Идемпотентность | claim; upsert `lecture_texts` / `chunks` по ключам; enqueue `konspekt:<lecture_id>` `ON CONFLICT DO NOTHING` |
 | Читает | `psy.jobs`, `psy.lectures`, `psy.glossary_terms` |
-| Пишет | `psy.lecture_texts`, `psy.chunks`, `psy.lectures`, `psy.jobs` |
-| Успех | `transcribed`, chunks ordinal с 1; opus не удалять |
+| Пишет | `psy.lecture_texts`, `psy.chunks`, `psy.lectures`, `psy.jobs` (в т.ч. job `konspekt`) |
+| Успех | `transcribed`, chunks ordinal с 1; opus не удалять; job `konspekt` queued; `Fin — Kick psy_04` (wait=false, `onError: continueRegularOutput`) |
 | Ошибка | как в psy_02 (без delete opus) |
 
-`workflow_version` пишется в `psy.jobs.payload`. Таймаут transcribe: 180 мин.
+`workflow_version` (`psy_03_transcribe_v2`) пишется в `psy.jobs.payload`. Таймаут transcribe: 180 мин.
+
+## Общие правила psy_04 / psy_05
+
+- Имена узлов `{Zone} — {Verb}`: `In` / `Run` / `Load` / `LLM` / `DB` / `Fin` / `Shared` / `NOTE`.
+- Порядок: `Run — Init Constants` → `Load — Backfill` (добавить недостающие jobs) → `Run — Create Job` (claim `SKIP LOCKED`, `attempts < 3`, зависший `running` > 4 ч) → `Run — Has Job`.
+- DeepSeek **только** через `Shared — DeepSeek*` (HTTP `POST https://api.deepseek.com/chat/completions`, credential `DeepSeek account`, тип `deepSeekApi`). Модель `deepseek-flash`, `thinking: {"type":"disabled"}`. Из `usage` берутся `prompt_tokens`, `completion_tokens`, `prompt_cache_hit_tokens`/`prompt_cache_miss_tokens`.
+- Каждый вызов → строка `psy.llm_usage` (`prompt_version`, `workflow_version`, `job_id`, `step`, `prompt_cache_hit_tokens`, `cost_usd`).
+- Цены (peak, USD за 1M токенов) лежат в `Run — Init Constants`: miss 0.3, hit 0.006, out 1.2. `monthly_budget_usd = 5`, остановка на 80 %, `max_cost_usd_per_lecture = 0.30`. Через `In — Execute` лимиты можно только **понизить** (`max_cost_usd_per_lecture`, `monthly_budget_usd`, для psy_04 ещё `konspekt_single_call_max_input_tokens`).
+- Ошибка: `Fin — Fail Context` → `Fin — Fail Job`. `409` → `queued`, attempts−1. Иначе `queued`, на 3-й попытке job и lecture → `failed`. Исключения (job `failed` сразу, attempts=3): `budget_exceeded` и «cards exist» — статус лекции **не меняется**; пустой транскрипт/конспект — job и lecture `failed`, LLM не вызывается.
+- В SQL `queryReplacement` — массив; JSON передаётся строкой и кастуется `::jsonb`. `workflow_version` пишется в `psy.jobs.payload`.
+- Зависит от миграции `0002_llm_versions_and_term_examples.sql` (колонки `llm_usage.*`, `glossary_terms.life_example`, `questions.ordinal_in_subtopic` и partial unique index). Триггеров по расписанию нет: workflow запускаются kick-ом предыдущего шага или вручную (`In — Manual` / backfill).
+
+## psy_04_konspekt
+
+| | |
+|---|---|
+| Триггеры | `In — Manual`, `In — Execute` (passthrough; опц. `konspekt_single_call_max_input_tokens`, `max_cost_usd_per_lecture`, `monthly_budget_usd` — только вниз) — **не активировать** |
+| Credentials | `psy Supabase (psy_n8n)`, `DeepSeek account` |
+| Промпты | `konspekt_v2` (single / map-часть), `konspekt_reduce_v1` (склейка); system prompt читается из `prompts/*.md` при сборке |
+| Идемпотентность | job `konspekt:<lecture_id>`; `lecture_texts` upsert по `lecture_id`; enqueue `terms:<lecture_id>` `ON CONFLICT DO NOTHING` |
+| Читает | `psy.jobs`, `psy.lectures`, `psy.lecture_texts`, `psy.chunks`, `psy.glossary_terms`, `psy.llm_usage` (траты за месяц и по лекции) |
+| Пишет | `psy.lecture_texts.konspekt_md` + `llm_model`, `psy.lectures`, `psy.jobs`, `psy.llm_usage` |
+| Backfill | `lectures.status = 'transcribed'` без job `konspekt:<id>` → queued |
+| Успех | `konspekt_ready`, job `done` (`payload.konspekt_result`: mode, parts, prompt_versions, токены, cost_usd), job `terms` queued, `Fin — Kick psy_05` (wait=false) |
+| Ошибка | общие правила; пустой транскрипт → job+lecture `failed`; `budget_exceeded` → job `failed`, лекция остаётся `transcribed` |
+
+Режим: оценка входа `символов / 2` токенов. `<= konspekt_single_call_max_input_tokens` (80 000) — один вызов. Иначе map: части по ~50 % лимита с перекрытием 1–2 сегмента → `Shared — DeepSeek` на каждую часть → `LLM — Collect Parts` → `LLM — Reduce Prep` → `Shared — DeepSeek Reduce`. Бюджетный предохранитель (`LLM — Budget Guard`) считает прогноз до первого вызова.
+
+## psy_05_terms_questions
+
+| | |
+|---|---|
+| Триггеры | `In — Manual`, `In — Execute` (passthrough; опц. `max_cost_usd_per_lecture`, `monthly_budget_usd` — только вниз) — **не активировать** |
+| Credentials | `psy Supabase (psy_n8n)`, `DeepSeek account` |
+| Промпты | `extract_terms_v2`, `gen_questions_v2`; валидатор `n8n/lib/validate_questions.js` встроен в Code-узлы при сборке |
+| Идемпотентность | job `terms:<lecture_id>`; `subtopics` по `(lecture_id, ordinal)`; `glossary_terms` по `(course_id, canonical)`; `questions` по `(subtopic_id, ordinal_in_subtopic) WHERE kind='life_mcq'` |
+| Читает | `psy.jobs`, `psy.lectures`, `psy.lecture_texts`, `psy.chunks`, `psy.glossary_terms`, `psy.cards` (проверка), `psy.llm_usage` |
+| Пишет | `psy.glossary_terms`, `psy.subtopics`, `psy.questions`, `psy.lectures`, `psy.jobs`, `psy.llm_usage` |
+| Backfill | `lectures.status = 'konspekt_ready'` без job `terms:<id>` → queued |
+| Успех | `questions_ready`, job `done`, `payload`: `terms_count`, `subtopics_count`, `questions_count`, `short_questions` (подтемы с `< 10` вопросов и фактическим числом), `llm_calls`, `cost_usd` |
+| Ошибка | общие правила; если по лекции уже есть `cards` — job `failed` («cards exist, regenerate refused»), лекция не меняется; 0 вопросов всего → job `failed` (`no_questions_generated`) |
+
+Термины: определение из другой лекции не перезаписывается (перезапись только для той же лекции или при пустом определении); `aliases` объединяются; `lecture_id` ставится, если был `NULL`; `life_example` следует за принятым определением. Подтемы вне нового списка удаляются только если карточек нет.
+
+Вопросы (цикл `Run — Loop Subtopics`, batch 1): фрагменты конспекта/транскрипта выбираются по терминам подтемы → `Shared — DeepSeek Questions` → валидатор → при `< 10` валидных **один** повтор (`Shared — DeepSeek Questions Retry`: исправление или добор с уже принятыми stem в списке «не повторять») → принять все валидные (частичный успех). Повтор пропускается, если не хватает бюджета. Подтема без терминов с определением пропускается (попадёт в `short_questions` с 0).

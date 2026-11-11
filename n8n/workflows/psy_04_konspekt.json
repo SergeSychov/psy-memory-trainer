@@ -1,0 +1,968 @@
+{
+  "name": "psy_04_konspekt",
+  "nodes": [
+    {
+      "id": "7faa9cb0-6000-43bc-a300-c95f8b7d4c6d",
+      "name": "NOTE — In",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        40
+      ],
+      "parameters": {
+        "content": "## In\nManual + Execute (passthrough). Optional lower-only overrides: `konspekt_single_call_max_input_tokens`, `max_cost_usd_per_lecture`, `monthly_budget_usd`. Inactive.",
+        "width": 360,
+        "height": 160,
+        "color": 5
+      }
+    },
+    {
+      "id": "9794bbc0-4915-492f-bd3a-9f78caecc573",
+      "name": "NOTE — Run",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        380,
+        40
+      ],
+      "parameters": {
+        "content": "## Run\nInit constants (prices peak: miss 0.3 / hit 0.006 / out 1.2 USD per 1M) → backfill konspekt jobs → claim `konspekt` (SKIP LOCKED).",
+        "width": 420,
+        "height": 160,
+        "color": 5
+      }
+    },
+    {
+      "id": "3d3303ca-8078-40a4-a647-0fc4598033c0",
+      "name": "NOTE — LLM",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        40
+      ],
+      "parameters": {
+        "content": "## LLM\nsingle call or map (parts with 1–2 segment overlap) → reduce. DeepSeek only via `Shared — DeepSeek*`. Budget guard: lecture cap + 80% month; budget_exceeded keeps lecture status.",
+        "width": 520,
+        "height": 180,
+        "color": 5
+      }
+    },
+    {
+      "id": "53170940-1556-40b2-8c97-4e89706adad6",
+      "name": "NOTE — DB/Fin",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2500,
+        40
+      ],
+      "parameters": {
+        "content": "## DB / Fin\nlecture_texts.konspekt_md, lecture → konspekt_ready, enqueue `terms:<id>`, kick psy_05. Fail: 409→queued, 3rd attempt→failed.",
+        "width": 460,
+        "height": 160,
+        "color": 5
+      }
+    },
+    {
+      "id": "b64bcffd-48cb-4a9f-b41a-d0b0a49cc312",
+      "name": "In — Manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "e059b078-4b33-48c1-aca4-c07555e4fd13",
+      "name": "In — Execute",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        480
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "23496da4-a24a-4bf9-977f-5d933559cf9d",
+      "name": "Run — Init Constants",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        380
+      ],
+      "parameters": {
+        "jsCode": "const input = (items[0] && items[0].json) || {};\nconst constants = {\n  workflow_version: 'psy_04_konspekt_v1',\n  workflow_name: 'psy_04_konspekt',\n  llm_model: 'deepseek-flash',\n  thinking: { type: 'disabled' },\n  temperature: 0.3,\n  max_output_tokens: 8000,\n  // DeepSeek peak prices, USD per 1M tokens (conservative; off-peak discount ignored).\n  prices_usd_per_1m: { tier: 'peak', miss: 0.3, hit: 0.006, out: 1.2 },\n  monthly_budget_usd: 5,\n  budget_stop_ratio: 0.8,\n  max_cost_usd_per_lecture: 0.3,\n  konspekt_single_call_max_input_tokens: 80000,\n  chars_per_token: 2,\n  map_part_ratio: 0.5,\n  map_overlap_segments: 2,\n  est_output_tokens_single: 5000,\n  est_output_tokens_part: 4000,\n  est_output_tokens_reduce: 6000,\n  reduce_system_tokens_margin: 1500,\n  prompt_versions: { konspekt: 'konspekt_v2', reduce: 'konspekt_reduce_v1' },\n  max_attempts: 3,\n  stale_running_hours: 4,\n};\n// In — Execute may only LOWER these limits (never raise).\n['konspekt_single_call_max_input_tokens', 'max_cost_usd_per_lecture', 'monthly_budget_usd'].forEach((key) => {\n  const v = Number(input[key]);\n  if (Number.isFinite(v) && v > 0 && v < constants[key]) constants[key] = v;\n});\nreturn [{ json: { constants }, pairedItem: 0 }];"
+      }
+    },
+    {
+      "id": "1a55f608-ad44-41e0-91d1-038bf7441265",
+      "name": "Load — Backfill",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        440,
+        380
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH ins AS (\n  INSERT INTO psy.jobs (lecture_id, step, status, idempotency_key, payload)\n  SELECT l.id, 'konspekt', 'queued', 'konspekt:' || l.id::text,\n         jsonb_build_object('workflow_version', $1::text, 'source', 'backfill')\n  FROM psy.lectures l\n  WHERE l.status = 'transcribed'\n  ON CONFLICT (idempotency_key) DO NOTHING\n  RETURNING id\n)\nSELECT count(*)::int AS backfilled FROM ins",
+        "options": {
+          "queryReplacement": "={{ [ $('Run — Init Constants').first().json.constants.workflow_version ] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "fVodKFRegu3319i0",
+          "name": "psy Supabase (psy_n8n)"
+        }
+      }
+    },
+    {
+      "id": "fbc2c118-4f26-4855-be1a-4a90bf73d3a2",
+      "name": "Run — Create Job",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        660,
+        380
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE psy.jobs j\nSET status = 'running',\n    attempts = attempts + 1,\n    started_at = now(),\n    error = NULL,\n    payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('workflow_version', $1, 'claimed_at', now())\nWHERE j.id = (\n  SELECT id FROM psy.jobs\n  WHERE step = 'konspekt'\n    AND attempts < 3\n    AND (\n      status = 'queued'\n      OR (status = 'running' AND started_at < now() - interval '4 hours')\n    )\n  ORDER BY created_at\n  LIMIT 1\n  FOR UPDATE SKIP LOCKED\n)\nRETURNING j.*",
+        "options": {
+          "queryReplacement": "={{ [ $('Run — Init Constants').first().json.constants.workflow_version ] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "fVodKFRegu3319i0",
+          "name": "psy Supabase (psy_n8n)"
+        }
+      }
+    },
+    {
+      "id": "c31f756c-987d-4586-a6ce-33f21809ef08",
+      "name": "Run — Has Job",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        380
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "22b9e7dc-1e78-4367-8d99-c72a7eef6af0",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "000a0b18-92bc-42df-a3ea-0ab596c5bc4a",
+      "name": "Load — Lecture",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1100,
+        300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  j.id AS job_id,\n  j.lecture_id,\n  j.attempts,\n  l.course_id,\n  l.title,\n  l.duration_sec,\n  l.lecturer_name,\n  l.status AS lecture_status,\n  COALESCE(lt.transcript, '') AS transcript,\n  COALESCE((\n    SELECT jsonb_agg(\n      jsonb_build_object('ordinal', c.ordinal, 'start_ms', c.start_ms, 'end_ms', c.end_ms, 'text', c.text)\n      ORDER BY c.ordinal\n    )\n    FROM psy.chunks c WHERE c.lecture_id = l.id\n  ), '[]'::jsonb) AS chunks,\n  COALESCE((\n    SELECT string_agg(g.canonical, ', ' ORDER BY g.canonical)\n    FROM psy.glossary_terms g WHERE g.course_id = l.course_id\n  ), '') AS glossary,\n  COALESCE((\n    SELECT sum(u.cost_usd) FROM psy.llm_usage u\n    WHERE u.created_at >= date_trunc('month', now())\n  ), 0)::float8 AS spent_month_usd,\n  COALESCE((\n    SELECT sum(u.cost_usd) FROM psy.llm_usage u WHERE u.lecture_id = l.id\n  ), 0)::float8 AS spent_lecture_usd\nFROM psy.jobs j\nJOIN psy.lectures l ON l.id = j.lecture_id\nLEFT JOIN psy.lecture_texts lt ON lt.lecture_id = l.id\nWHERE j.id = $1::uuid",
+        "options": {
+          "queryReplacement": "={{ [ $('Run — Create Job').first().json.id ] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "fVodKFRegu3319i0",
+          "name": "psy Supabase (psy_n8n)"
+        }
+      }
+    },
+    {
+      "id": "6fd28f63-2e30-444c-bf79-6120746087c9",
+      "name": "Load — Has Transcript",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1320,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "665bbd2b-4d05-4561-ac20-30847cedf7c9",
+              "leftValue": "={{ String($json.transcript || '').trim() }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "66345aec-458c-462a-a99c-15eab1099cb1",
+      "name": "LLM — Build Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        220
+      ],
+      "parameters": {
+        "jsCode": "const C = $('Run — Init Constants').first().json.constants;\nconst row = items[0].json;\nconst SYSTEM = \"Ты — редактор коротких учебных конспектов по психологии. На вход — транскрипт Whisper (с ошибками) и метаданные. Сделай **короткий** Markdown-конспект на русском: только ключевые идеи, термины, связи и схемы. Без полного пересказа и без воды.\\n\\nРаботай только с этой лекцией. Не подмешивай другие лекции и общие знания. Дыру ASR помечай `[неразборчиво]`, не раскрывай.\\n\\n### Вход\\n\\n1. `МЕТАДАННЫЕ` — название, длительность, лектор (если есть).\\n2. `ГЛОССАРИЙ` (опционально) — канонические написания.\\n3. `ТРАНСКРИПТ` — сырой Whisper. Если помечено «часть N из M» — это фрагмент: законсервируй только его, не достраивай целое.\\n\\n### Формат\\n\\n**1. Шапка**\\n\\n- `#` тема\\n- Строка: **Краткий конспект лекции**\\n- Одна строка метаданных: лектор / длительность (если есть)\\n\\n**2. Основная часть**\\n\\n- Разделы `## 1. …`, `## 2. …` — сквозная нумерация, 3–8 разделов на целую лекцию (на часть — пропорционально меньше).\\n- Внутри — сжатые абзацы или списки **от лица лектора** (первое лицо), без канцелярита.\\n- Термины при первом появлении **жирным**.\\n- Случаи — зачин **Случай:**, только если лектор их разбирает; без лишних деталей.\\n- Перекрёстные отсылки к сквозным образам лекции — коротко («Возвращаемся к …»).\\n\\n**3. Схемы**\\n\\n- Если лектор даёт классификацию, ветвление, сетку или цепочку — один блок ` ```mermaid ` (flowchart) или ASCII-схема. Только сказанное, без новых узлов.\\n\\n**4. Финал**\\n\\n1. `## N. Для заучивания` — 5–10 тезисов-шпаргалки.\\n2. `## N+1. Краткий глоссарий` — таблица `| Термин | Значение |` только по этой лекции.\\n\\n**5. Оформление**\\n\\n- Тире «—», кавычки «ёлочки», буква «ё».\\n- Между крупными разделами — `---`.\\n- Не пиши преамбулу и мета-комментарии: на выходе только Markdown конспекта.\";\nconst cpt = C.chars_per_token || 2;\nconst est = (s) => Math.ceil(String(s || '').length / cpt);\n\nconst metaLines = ['МЕТАДАННЫЕ', 'Название: ' + (row.title || '[неизвестно]')];\nif (row.duration_sec) metaLines.push('Длительность: ' + Math.round(Number(row.duration_sec) / 60) + ' мин');\nif (row.lecturer_name) metaLines.push('Лектор: ' + row.lecturer_name);\nconst meta = metaLines.join('\\n');\nconst glossary = row.glossary ? 'ГЛОССАРИЙ\\n' + row.glossary : '';\nconst header = [meta, glossary].filter(Boolean).join('\\n\\n');\nconst transcript = String(row.transcript || '').trim();\nconst limit = C.konspekt_single_call_max_input_tokens;\nconst sysTokens = est(SYSTEM);\n\nfunction requestBody(user) {\n  return {\n    model: C.llm_model,\n    messages: [\n      { role: 'system', content: SYSTEM },\n      { role: 'user', content: user },\n    ],\n    thinking: C.thinking,\n    max_tokens: C.max_output_tokens,\n    temperature: C.temperature,\n    stream: false,\n  };\n}\n\nconst common = {\n  job_id: row.job_id,\n  lecture_id: row.lecture_id,\n  lecture_title: row.title || null,\n  meta_text: meta,\n  prompt_version: C.prompt_versions.konspekt,\n  spent_month_usd: Number(row.spent_month_usd) || 0,\n  spent_lecture_usd: Number(row.spent_lecture_usd) || 0,\n};\n\nconst userSingle = header + '\\n\\nТРАНСКРИПТ\\n' + transcript;\nconst singleIn = sysTokens + est(userSingle);\nconst out = [];\n\nif (singleIn <= limit) {\n  out.push({\n    json: {\n      ...common,\n      mode: 'single',\n      part_index: 1,\n      parts_total: 1,\n      step: 'konspekt',\n      est_input_tokens: singleIn,\n      est_output_tokens: C.est_output_tokens_single,\n      request_body: requestBody(userSingle),\n    },\n    pairedItem: 0,\n  });\n  return out;\n}\n\n// map: split chunks by size with 1–2 segment overlap\nlet segs = (Array.isArray(row.chunks) ? row.chunks : [])\n  .map((c) => String((c && c.text) || '').trim())\n  .filter(Boolean);\nif (!segs.length) {\n  // fallback: pseudo-segments from the raw transcript\n  segs = [];\n  let rest = transcript;\n  while (rest.length) {\n    let cut = Math.min(rest.length, 1500);\n    if (cut < rest.length) {\n      const dot = rest.lastIndexOf('. ', cut);\n      if (dot > 400) cut = dot + 1;\n    }\n    segs.push(rest.slice(0, cut).trim());\n    rest = rest.slice(cut).trim();\n  }\n}\nconst overhead = sysTokens + est(header) + 200;\nconst partTokens = Math.floor(limit * C.map_part_ratio) - overhead;\nconst partChars = Math.max(partTokens * cpt, 4000);\nconst overlap = Math.max(1, Math.min(2, C.map_overlap_segments || 1));\nconst bodies = [];\nlet i = 0;\nwhile (i < segs.length) {\n  let j = i;\n  let size = 0;\n  while (j < segs.length && (j === i || size + segs[j].length + 1 <= partChars)) {\n    size += segs[j].length + 1;\n    j++;\n  }\n  bodies.push(segs.slice(i, j).join('\\n'));\n  if (j >= segs.length) break;\n  i = Math.max(j - overlap, i + 1);\n}\nconst total = bodies.length;\nbodies.forEach((text, k) => {\n  const user = header + '\\n\\nТРАНСКРИПТ (часть ' + (k + 1) + ' из ' + total + ')\\n' + text;\n  out.push({\n    json: {\n      ...common,\n      mode: 'map',\n      part_index: k + 1,\n      parts_total: total,\n      step: 'konspekt_map',\n      est_input_tokens: sysTokens + est(user),\n      est_output_tokens: C.est_output_tokens_part,\n      request_body: requestBody(user),\n    },\n    pairedItem: 0,\n  });\n});\nreturn out;"
+      }
+    },
+    {
+      "id": "cab3d7e8-0c47-4943-81e2-7b4230c6f73d",
+      "name": "LLM — Budget Guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        220
+      ],
+      "parameters": {
+        "jsCode": "const C = $('Run — Init Constants').first().json.constants;\nconst P = C.prices_usd_per_1m;\nconst first = items[0].json;\nlet projected = 0;\nlet partsOut = 0;\nfor (const it of items) {\n  projected += (it.json.est_input_tokens * P.miss + it.json.est_output_tokens * P.out) / 1e6;\n  partsOut += it.json.est_output_tokens;\n}\nif (first.mode === 'map') {\n  const reduceIn = partsOut + C.reduce_system_tokens_margin;\n  projected += (reduceIn * P.miss + C.est_output_tokens_reduce * P.out) / 1e6;\n}\nconst lectureCap = C.max_cost_usd_per_lecture;\nconst monthCap = C.monthly_budget_usd * C.budget_stop_ratio;\nconst numbers = {\n  projected_cost_usd: Number(projected.toFixed(5)),\n  spent_lecture_usd: first.spent_lecture_usd,\n  spent_month_usd: first.spent_month_usd,\n  lecture_cap_usd: lectureCap,\n  month_cap_usd: monthCap,\n};\nlet reason = null;\nif (first.spent_lecture_usd + projected > lectureCap) {\n  reason = 'budget_exceeded: лимит на лекцию ' + lectureCap + ' USD (потрачено ' + first.spent_lecture_usd.toFixed(4)\n    + ', прогноз ' + projected.toFixed(4) + ')';\n} else if (first.spent_month_usd + projected > monthCap) {\n  reason = 'budget_exceeded: 80% месячного бюджета ' + C.monthly_budget_usd + ' USD (потрачено '\n    + first.spent_month_usd.toFixed(4) + ', прогноз ' + projected.toFixed(4) + ')';\n}\nif (reason) {\n  return [{ json: { budget_exceeded: true, error_message: reason, lecture_id: first.lecture_id, job_id: first.job_id, ...numbers }, pairedItem: 0 }];\n}\nreturn items.map((it, i) => ({\n  json: { ...it.json, budget_exceeded: false, ...numbers },\n  pairedItem: i,\n}));"
+      }
+    },
+    {
+      "id": "e12a2c71-9fd5-4717-993f-51ad6d455739",
+      "name": "LLM — Budget OK",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1980,
+        220
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "320d77a1-2fcc-4d62-bf77-d213962999dc",
+              "leftValue": "={{ String($json.budget_exceeded) }}",
+              "rightValue": "false",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "dda6f2cb-0e11-40b7-b4b5-6ecf91e8640a",
+      "name": "Shared — DeepSeek",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2200,
+        140
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.deepseek.com/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "sendBody": true,
+        "options": {
+          "timeout": 900000
+        },
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request_body) }}",
+        "nodeCredentialType": "deepSeekApi"
+      },
+      "credentials": {
+        "deepSeekApi": {
+          "id": "xyaJwQg88odvtCfC",
+          "name": "DeepSeek account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "364b94b5-6be9-4332-b0d0-24dca66db1c1",
+      "name": "LLM — Parse Usage",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        140
+      ],
+      "parameters": {
+        "jsCode": "const C = $('Run — Init Constants').first().json.constants;\nfunction parseDeepSeek(resp, C, src, step, promptVersion) {\n  const r = resp || {};\n  const choice = (r.choices && r.choices[0]) || {};\n  const content = String((choice.message && choice.message.content) || '');\n  const u = r.usage || {};\n  const hit = Number(u.prompt_cache_hit_tokens != null\n    ? u.prompt_cache_hit_tokens\n    : ((u.prompt_tokens_details && u.prompt_tokens_details.cached_tokens) || 0)) || 0;\n  let miss = u.prompt_cache_miss_tokens != null ? Number(u.prompt_cache_miss_tokens) : null;\n  const promptTokens = Number(u.prompt_tokens != null ? u.prompt_tokens : ((miss || 0) + hit)) || 0;\n  if (miss == null || !Number.isFinite(miss)) miss = Math.max(promptTokens - hit, 0);\n  const completion = Number(u.completion_tokens) || 0;\n  const P = C.prices_usd_per_1m;\n  const costExact = (miss * P.miss + hit * P.hit + completion * P.out) / 1e6;\n  return {\n    content,\n    finish_reason: choice.finish_reason || null,\n    cost_exact: costExact,\n    usage_row: {\n      lecture_id: src.lecture_id,\n      job_id: src.job_id,\n      workflow_name: C.workflow_name,\n      workflow_version: C.workflow_version,\n      model: r.model || C.llm_model,\n      prompt_tokens: promptTokens,\n      completion_tokens: completion,\n      cost_usd: Number(costExact.toFixed(6)),\n      prompt_version: promptVersion,\n      prompt_cache_hit_tokens: hit,\n      step,\n    },\n  };\n}\nconst out = [];\nitems.forEach((it, i) => {\n  const src = $('LLM — Budget Guard').itemMatching(i).json;\n  const p = parseDeepSeek(it.json, C, src, src.step, src.prompt_version);\n  const text = p.content.trim();\n  let errorMessage = null;\n  if (!text) errorMessage = 'llm_empty_response';\n  else if (p.finish_reason === 'length') errorMessage = 'llm_truncated: finish_reason=length (' + src.step + ')';\n  out.push({\n    json: {\n      ok: !errorMessage,\n      error_message: errorMessage,\n      content: p.content,\n      finish_reason: p.finish_reason,\n      cost_exact: p.cost_exact,\n      usage_row: p.usage_row,\n      part_index: src.part_index || 1,\n      parts_total: src.parts_total || 1,\n      mode: src.mode || 'single',\n      lecture_id: src.lecture_id,\n      job_id: src.job_id,\n    },\n    pairedItem: i,\n  });\n});\nreturn out;"
+      }
+    },
+    {
+      "id": "2f925bc4-e5f8-4808-a498-0c33db5cfcff",
+      "name": "DB — Log Usage",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2640,
+        140
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO psy.llm_usage (\n  lecture_id, workflow_name, model, prompt_tokens, completion_tokens, cost_usd,\n  prompt_version, workflow_version, job_id, prompt_cache_hit_tokens, step\n) VALUES (\n  $1::uuid, $2, $3, $4::int, $5::int, $6::numeric,\n  $7, $8, $9::uuid, $10::int, $11\n)\nRETURNING id",
+        "options": {
+          "queryReplacement": "={{ [\n  $json.usage_row.lecture_id,\n  $json.usage_row.workflow_name,\n  $json.usage_row.model,\n  $json.usage_row.prompt_tokens,\n  $json.usage_row.completion_tokens,\n  $json.usage_row.cost_usd,\n  $json.usage_row.prompt_version,\n  $json.usage_row.workflow_version,\n  $json.usage_row.job_id,\n  $json.usage_row.prompt_cache_hit_tokens,\n  $json.usage_row.step\n] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "fVodKFRegu3319i0",
+          "name": "psy Supabase (psy_n8n)"
+        }
+      }
+    },
+    {
+      "id": "f40daa38-a8cb-493c-9885-2b530beeb905",
+      "name": "LLM — Collect Parts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        140
+      ],
+      "parameters": {
+        "jsCode": "const C = $('Run — Init Constants').first().json.constants;\nconst parsed = $('LLM — Parse Usage').all().map((i) => i.json);\nconst total = parsed.length ? parsed[0].parts_total : 0;\n// Some parts failed at the HTTP node: the error output already goes to Fin — Fail Context.\nif (!parsed.length || parsed.length < total) return [];\nfunction cleanMd(s) {\n  let t = String(s || '').trim();\n  const m = t.match(/^```(?:markdown|md)\\s*\\n([\\s\\S]*?)\\n```$/);\n  if (m) t = m[1].trim();\n  return t;\n}\nparsed.sort((a, b) => a.part_index - b.part_index);\nconst build = $('LLM — Budget Guard').first().json;\nconst sum = (k) => parsed.reduce((s, p) => s + (Number(p.usage_row[k]) || 0), 0);\nconst cost = parsed.reduce((s, p) => s + p.cost_exact, 0);\nconst failed = parsed.filter((p) => !p.ok);\nconst mode = parsed[0].mode;\nconst base = {\n  lecture_id: parsed[0].lecture_id,\n  job_id: parsed[0].job_id,\n  mode,\n  meta_text: build.meta_text,\n  prompt_versions: mode === 'single' ? [C.prompt_versions.konspekt] : [C.prompt_versions.konspekt, C.prompt_versions.reduce],\n  llm_model: parsed[0].usage_row.model,\n  map_cost_usd: cost,\n  map_prompt_tokens: sum('prompt_tokens'),\n  map_completion_tokens: sum('completion_tokens'),\n  map_cache_hit_tokens: sum('prompt_cache_hit_tokens'),\n  parts_total: total,\n};\nif (failed.length) {\n  return [{ json: { ...base, ok: false, error_message: failed.map((p) => 'part ' + p.part_index + ': ' + p.error_message).join('; ') }, pairedItem: 0 }];\n}\nconst save_payload = {\n  konspekt_result: {\n    mode,\n    parts: total,\n    prompt_versions: base.prompt_versions,\n    llm_model: base.llm_model,\n    workflow_version: C.workflow_version,\n    prompt_tokens: base.map_prompt_tokens,\n    completion_tokens: base.map_completion_tokens,\n    cache_hit_tokens: base.map_cache_hit_tokens,\n    cost_usd: Number(cost.toFixed(5)),\n  },\n};\nif (mode === 'single') {\n  return [{ json: { ...base, ok: true, konspekt_md: cleanMd(parsed[0].content), save_payload }, pairedItem: 0 }];\n}\nreturn [{ json: { ...base, ok: true, parts_md: parsed.map((p) => cleanMd(p.content)), save_payload }, pairedItem: 0 }];"
+      }
+    },
+    {
+      "id": "f7827b94-992e-42e3-b071-d56ad27bff89",
+      "name": "LLM — Parts OK",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3080,
+        140
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "ee681759-6399-4f4d-a69d-37fe89382db4",
+              "leftValue": "={{ String($json.ok) }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "f9417a89-850f-4de7-b23f-a5ae786093c7",
+      "name": "LLM — Is Single",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3300,
+        140
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "d336711e-f284-4f0c-9a58-1a0b96c63125",
+              "leftValue": "={{ $json.mode }}",
+              "rightValue": "single",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "d63d8957-5fa9-4652-af29-46a56a72c289",
+      "name": "LLM — Reduce Prep",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const C = $('Run — Init Constants').first().json.constants;\nconst col = items[0].json;\nconst SYSTEM = \"Ты склеиваешь части короткого конспекта одной лекции в один документ Markdown.\\n\\nВход пользователя:\\nМЕТАДАННЫЕ\\nЧАСТИ — нумерованный список Markdown-фрагментов («часть N из M»).\\n\\nПравила:\\n- Сохрани только содержание частей. Не добавляй факты, термины и разделы, которых нет ни в одной части.\\n- Сделай сквозную нумерацию `## 1.`, `## 2.`, … по логике целой лекции.\\n- Убери дубли на стыках частей (повторы абзацев и тезисов).\\n- Сохрани mermaid/ASCII-схемы, если они есть в частях (без новых узлов).\\n- Сохрани `[неразборчиво]` как есть.\\n- В конце оставь один блок «Для заучивания» и один «Краткий глоссарий», объединив без повторов.\\n- Выход — только готовый Markdown, без преамбулы.\";\nconst cpt = C.chars_per_token || 2;\nconst m = col.parts_md.length;\nconst body = col.parts_md.map((p, i) => (i + 1) + '. часть ' + (i + 1) + ' из ' + m + '\\n\\n' + p).join('\\n\\n---\\n\\n');\nconst user = col.meta_text + '\\n\\nЧАСТИ\\n' + body;\nreturn [{\n  json: {\n    lecture_id: col.lecture_id,\n    job_id: col.job_id,\n    mode: 'map',\n    part_index: 1,\n    parts_total: 1,\n    step: 'konspekt_reduce',\n    prompt_version: C.prompt_versions.reduce,\n    est_input_tokens: Math.ceil((SYSTEM.length + user.length) / cpt),\n    request_body: {\n      model: C.llm_model,\n      messages: [\n        { role: 'system', content: SYSTEM },\n        { role: 'user', content: user },\n      ],\n      thinking: C.thinking,\n      max_tokens: C.max_output_tokens,\n      temperature: C.temperature,\n      stream: false,\n    },\n  },\n  pairedItem: 0,\n}];"
+      }
+    },
+    {
+      "id": "e6572d6c-978e-4179-865d-a326a1de4f65",
+      "name": "Shared — DeepSeek Reduce",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        3740,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.deepseek.com/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "sendBody": true,
+        "options": {
+          "timeout": 900000
+        },
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request_body) }}",
+        "nodeCredentialType": "deepSeekApi"
+      },
+      "credentials": {
+        "deepSeekApi": {
+          "id": "xyaJwQg88odvtCfC",
+          "name": "DeepSeek account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "20aa9661-fe92-4ae5-b003-25ff3456d221",
+      "name": "LLM — Parse Usage Reduce",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3960,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const C = $('Run — Init Constants').first().json.constants;\nfunction parseDeepSeek(resp, C, src, step, promptVersion) {\n  const r = resp || {};\n  const choice = (r.choices && r.choices[0]) || {};\n  const content = String((choice.message && choice.message.content) || '');\n  const u = r.usage || {};\n  const hit = Number(u.prompt_cache_hit_tokens != null\n    ? u.prompt_cache_hit_tokens\n    : ((u.prompt_tokens_details && u.prompt_tokens_details.cached_tokens) || 0)) || 0;\n  let miss = u.prompt_cache_miss_tokens != null ? Number(u.prompt_cache_miss_tokens) : null;\n  const promptTokens = Number(u.prompt_tokens != null ? u.prompt_tokens : ((miss || 0) + hit)) || 0;\n  if (miss == null || !Number.isFinite(miss)) miss = Math.max(promptTokens - hit, 0);\n  const completion = Number(u.completion_tokens) || 0;\n  const P = C.prices_usd_per_1m;\n  const costExact = (miss * P.miss + hit * P.hit + completion * P.out) / 1e6;\n  return {\n    content,\n    finish_reason: choice.finish_reason || null,\n    cost_exact: costExact,\n    usage_row: {\n      lecture_id: src.lecture_id,\n      job_id: src.job_id,\n      workflow_name: C.workflow_name,\n      workflow_version: C.workflow_version,\n      model: r.model || C.llm_model,\n      prompt_tokens: promptTokens,\n      completion_tokens: completion,\n      cost_usd: Number(costExact.toFixed(6)),\n      prompt_version: promptVersion,\n      prompt_cache_hit_tokens: hit,\n      step,\n    },\n  };\n}\nconst out = [];\nitems.forEach((it, i) => {\n  const src = $('LLM — Reduce Prep').first().json;\n  const p = parseDeepSeek(it.json, C, src, src.step, src.prompt_version);\n  const text = p.content.trim();\n  let errorMessage = null;\n  if (!text) errorMessage = 'llm_empty_response';\n  else if (p.finish_reason === 'length') errorMessage = 'llm_truncated: finish_reason=length (' + src.step + ')';\n  out.push({\n    json: {\n      ok: !errorMessage,\n      error_message: errorMessage,\n      content: p.content,\n      finish_reason: p.finish_reason,\n      cost_exact: p.cost_exact,\n      usage_row: p.usage_row,\n      part_index: src.part_index || 1,\n      parts_total: src.parts_total || 1,\n      mode: src.mode || 'single',\n      lecture_id: src.lecture_id,\n      job_id: src.job_id,\n    },\n    pairedItem: i,\n  });\n});\nreturn out;"
+      }
+    },
+    {
+      "id": "4de112a0-3b49-405c-b04e-78e7c1dc0245",
+      "name": "DB — Log Usage Reduce",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4180,
+        300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO psy.llm_usage (\n  lecture_id, workflow_name, model, prompt_tokens, completion_tokens, cost_usd,\n  prompt_version, workflow_version, job_id, prompt_cache_hit_tokens, step\n) VALUES (\n  $1::uuid, $2, $3, $4::int, $5::int, $6::numeric,\n  $7, $8, $9::uuid, $10::int, $11\n)\nRETURNING id",
+        "options": {
+          "queryReplacement": "={{ [\n  $json.usage_row.lecture_id,\n  $json.usage_row.workflow_name,\n  $json.usage_row.model,\n  $json.usage_row.prompt_tokens,\n  $json.usage_row.completion_tokens,\n  $json.usage_row.cost_usd,\n  $json.usage_row.prompt_version,\n  $json.usage_row.workflow_version,\n  $json.usage_row.job_id,\n  $json.usage_row.prompt_cache_hit_tokens,\n  $json.usage_row.step\n] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "fVodKFRegu3319i0",
+          "name": "psy Supabase (psy_n8n)"
+        }
+      }
+    },
+    {
+      "id": "1ac5c499-2707-4e9b-b6fa-1a375ba1b89d",
+      "name": "LLM — Finalize Reduce",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4400,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const C = $('Run — Init Constants').first().json.constants;\nconst p = $('LLM — Parse Usage Reduce').first().json;\nconst col = $('LLM — Collect Parts').first().json;\nfunction cleanMd(s) {\n  let t = String(s || '').trim();\n  const m = t.match(/^```(?:markdown|md)\\s*\\n([\\s\\S]*?)\\n```$/);\n  if (m) t = m[1].trim();\n  return t;\n}\nconst payload = JSON.parse(JSON.stringify(col.save_payload));\nconst r = payload.konspekt_result;\nr.reduce_prompt_tokens = p.usage_row.prompt_tokens;\nr.reduce_completion_tokens = p.usage_row.completion_tokens;\nr.reduce_cache_hit_tokens = p.usage_row.prompt_cache_hit_tokens;\nr.cost_usd = Number((r.cost_usd + p.cost_exact).toFixed(5));\nreturn [{\n  json: {\n    ok: p.ok,\n    error_message: p.error_message,\n    lecture_id: col.lecture_id,\n    job_id: col.job_id,\n    mode: 'map',\n    llm_model: p.usage_row.model,\n    konspekt_md: p.ok ? cleanMd(p.content) : '',\n    save_payload: payload,\n  },\n  pairedItem: 0,\n}];"
+      }
+    },
+    {
+      "id": "d91eb9e8-fb4b-42fd-9bed-90335cc605dc",
+      "name": "LLM — Reduce OK",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4620,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "e73a0a20-a4a2-4924-92c9-ab309106ff6b",
+              "leftValue": "={{ String($json.ok) }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "81fffd1b-0214-4900-95b8-3dd944e671b9",
+      "name": "DB — Save Konspekt",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4840,
+        140
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH params AS (\n  SELECT\n    $1::uuid AS lecture_id,\n    $2::uuid AS job_id,\n    $3::text AS konspekt_md,\n    $4::text AS llm_model,\n    $5::jsonb AS result_payload,\n    $6::text AS workflow_version\n), up AS (\n  INSERT INTO psy.lecture_texts (lecture_id, konspekt_md, llm_model)\n  SELECT lecture_id, konspekt_md, llm_model FROM params\n  ON CONFLICT (lecture_id) DO UPDATE\n    SET konspekt_md = EXCLUDED.konspekt_md,\n        llm_model = EXCLUDED.llm_model\n  RETURNING lecture_id\n), lec AS (\n  UPDATE psy.lectures l\n  SET status = 'konspekt_ready', error = NULL\n  FROM params p\n  WHERE l.id = p.lecture_id\n    AND EXISTS (SELECT 1 FROM up)\n    AND l.status IN ('transcribed', 'konspekt_ready', 'failed')\n  RETURNING l.id\n), done_job AS (\n  UPDATE psy.jobs j\n  SET status = 'done',\n      finished_at = now(),\n      error = NULL,\n      payload = COALESCE(j.payload, '{}'::jsonb) || p.result_payload\n        || jsonb_build_object('workflow_version', p.workflow_version)\n  FROM params p\n  WHERE j.id = p.job_id AND EXISTS (SELECT 1 FROM up)\n  RETURNING j.id\n), enq AS (\n  INSERT INTO psy.jobs (lecture_id, step, status, idempotency_key, payload)\n  SELECT p.lecture_id, 'terms', 'queued', 'terms:' || p.lecture_id::text,\n         jsonb_build_object('workflow_version', p.workflow_version, 'source', 'psy_04')\n  FROM params p\n  WHERE EXISTS (SELECT 1 FROM up)\n  ON CONFLICT (idempotency_key) DO NOTHING\n  RETURNING id\n)\nSELECT\n  (SELECT lecture_id FROM up) AS lecture_id,\n  (SELECT id FROM lec) AS lecture_updated,\n  (SELECT id FROM done_job) AS job_id,\n  (SELECT id FROM enq) AS terms_job_id",
+        "options": {
+          "queryReplacement": "={{ [\n  $json.lecture_id,\n  $json.job_id,\n  $json.konspekt_md,\n  $json.llm_model,\n  JSON.stringify($json.save_payload || {}),\n  $('Run — Init Constants').first().json.constants.workflow_version\n] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "fVodKFRegu3319i0",
+          "name": "psy Supabase (psy_n8n)"
+        }
+      }
+    },
+    {
+      "id": "b1d0bdaf-e5fb-44b3-ab54-4b12baa4279c",
+      "name": "Fin — Kick psy_05",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        5060,
+        140
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "N48DV8uK9gJKckhi"
+        },
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "b55a25dd-a132-407e-a706-46114d48ca6e",
+      "name": "Fin — Fail Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3300,
+        560
+      ],
+      "parameters": {
+        "jsCode": "const job = $('Run — Create Job').first().json;\nconst e = (items[0] && items[0].json) || {};\nconst err = e.error && typeof e.error === 'object' ? e.error : {};\nlet permanent = false;\nlet keepLecture = false;\nlet message = null;\nif (e.budget_exceeded === true) {\n  permanent = true;\n  keepLecture = true;\n  message = e.error_message || 'budget_exceeded';\n} else if (e.transcript !== undefined && !String(e.transcript || '').trim() && !e.error) {\n  permanent = true;\n  keepLecture = true;\n  message = 'empty_transcript: у лекции нет текста транскрипта, LLM не вызывался';\n}\nif (message === null) {\n  message = e.error_message || err.message || (typeof e.error === 'string' ? e.error : null) || e.message\n    || JSON.stringify(e).slice(0, 500);\n}\nmessage = String(message).slice(0, 800);\nlet statusCode = Number(e.statusCode ?? e.httpCode ?? err.httpCode ?? err.status ?? err.statusCode ?? 0);\nif (!Number.isFinite(statusCode)) statusCode = 0;\nif (!statusCode) {\n  const m = message.match(/^(\\d{3})\\b/);\n  if (m) statusCode = Number(m[1]);\n}\nreturn [{\n  json: {\n    job_id: job.id,\n    lecture_id: job.lecture_id,\n    attempts: job.attempts,\n    status_code: statusCode,\n    error_message: message,\n    permanent,\n    keep_lecture: keepLecture,\n  },\n  pairedItem: 0,\n}];"
+      }
+    },
+    {
+      "id": "351c3cc8-283e-495b-af87-c0e99f6ddbff",
+      "name": "Fin — Fail Job",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3520,
+        560
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH j AS (\n  UPDATE psy.jobs\n  SET status = CASE\n        WHEN $4::boolean THEN 'failed'\n        WHEN $2::int = 409 THEN 'queued'\n        WHEN attempts >= 3 THEN 'failed'\n        ELSE 'queued'\n      END,\n      attempts = CASE\n        WHEN $4::boolean THEN 3\n        WHEN $2::int = 409 THEN GREATEST(attempts - 1, 0)\n        ELSE attempts\n      END,\n      error = $3,\n      finished_at = CASE\n        WHEN $4::boolean OR ($2::int <> 409 AND attempts >= 3) THEN now()\n        ELSE NULL\n      END,\n      started_at = CASE\n        WHEN NOT $4::boolean AND ($2::int = 409 OR attempts < 3) THEN NULL\n        ELSE started_at\n      END\n  WHERE id = $1::uuid\n  RETURNING id, status, attempts, lecture_id\n), lec AS (\n  UPDATE psy.lectures\n  SET status = 'failed', error = $3\n  WHERE id = (SELECT lecture_id FROM j)\n    AND (SELECT status FROM j) = 'failed'\n    AND NOT $5::boolean\n  RETURNING id\n)\nSELECT * FROM j",
+        "options": {
+          "queryReplacement": "={{ [\n  $json.job_id,\n  Number($json.status_code || 0),\n  $json.error_message,\n  Boolean($json.permanent),\n  Boolean($json.keep_lecture)\n] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "fVodKFRegu3319i0",
+          "name": "psy Supabase (psy_n8n)"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "In — Manual": {
+      "main": [
+        [
+          {
+            "node": "Run — Init Constants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "In — Execute": {
+      "main": [
+        [
+          {
+            "node": "Run — Init Constants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run — Init Constants": {
+      "main": [
+        [
+          {
+            "node": "Load — Backfill",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load — Backfill": {
+      "main": [
+        [
+          {
+            "node": "Run — Create Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run — Create Job": {
+      "main": [
+        [
+          {
+            "node": "Run — Has Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run — Has Job": {
+      "main": [
+        [
+          {
+            "node": "Load — Lecture",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load — Lecture": {
+      "main": [
+        [
+          {
+            "node": "Load — Has Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load — Has Transcript": {
+      "main": [
+        [
+          {
+            "node": "LLM — Build Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fin — Fail Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM — Build Prompt": {
+      "main": [
+        [
+          {
+            "node": "LLM — Budget Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM — Budget Guard": {
+      "main": [
+        [
+          {
+            "node": "LLM — Budget OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM — Budget OK": {
+      "main": [
+        [
+          {
+            "node": "Shared — DeepSeek",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fin — Fail Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shared — DeepSeek": {
+      "main": [
+        [
+          {
+            "node": "LLM — Parse Usage",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fin — Fail Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM — Parse Usage": {
+      "main": [
+        [
+          {
+            "node": "DB — Log Usage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB — Log Usage": {
+      "main": [
+        [
+          {
+            "node": "LLM — Collect Parts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM — Collect Parts": {
+      "main": [
+        [
+          {
+            "node": "LLM — Parts OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM — Parts OK": {
+      "main": [
+        [
+          {
+            "node": "LLM — Is Single",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fin — Fail Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM — Is Single": {
+      "main": [
+        [
+          {
+            "node": "DB — Save Konspekt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "LLM — Reduce Prep",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM — Reduce Prep": {
+      "main": [
+        [
+          {
+            "node": "Shared — DeepSeek Reduce",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shared — DeepSeek Reduce": {
+      "main": [
+        [
+          {
+            "node": "LLM — Parse Usage Reduce",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fin — Fail Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM — Parse Usage Reduce": {
+      "main": [
+        [
+          {
+            "node": "DB — Log Usage Reduce",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB — Log Usage Reduce": {
+      "main": [
+        [
+          {
+            "node": "LLM — Finalize Reduce",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM — Finalize Reduce": {
+      "main": [
+        [
+          {
+            "node": "LLM — Reduce OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM — Reduce OK": {
+      "main": [
+        [
+          {
+            "node": "DB — Save Konspekt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fin — Fail Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB — Save Konspekt": {
+      "main": [
+        [
+          {
+            "node": "Fin — Kick psy_05",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fin — Fail Context": {
+      "main": [
+        [
+          {
+            "node": "Fin — Fail Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}

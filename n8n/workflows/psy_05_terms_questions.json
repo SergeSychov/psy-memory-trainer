@@ -1,0 +1,1309 @@
+{
+  "name": "psy_05_terms_questions",
+  "nodes": [
+    {
+      "id": "2242e00c-a878-46b7-b07f-c4f5d8826b12",
+      "name": "NOTE — In",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        40
+      ],
+      "parameters": {
+        "content": "## In\nManual + Execute (passthrough). Lower-only overrides: `max_cost_usd_per_lecture`, `monthly_budget_usd`. Inactive.",
+        "width": 360,
+        "height": 140,
+        "color": 5
+      }
+    },
+    {
+      "id": "a7c4f9e9-77ae-44a9-8397-faa61290efd9",
+      "name": "NOTE — Run/Load",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        380,
+        40
+      ],
+      "parameters": {
+        "content": "## Run / Load\nBackfill `terms` jobs for `konspekt_ready` → claim `terms`. Refuse when cards already exist for the lecture (no LLM).",
+        "width": 460,
+        "height": 140,
+        "color": 5
+      }
+    },
+    {
+      "id": "6bb2b9d5-84d3-49f1-aca7-fec34fd270dc",
+      "name": "NOTE — LLM",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        40
+      ],
+      "parameters": {
+        "content": "## LLM\n`extract_terms_v2` → upsert terms/subtopics → per subtopic `gen_questions_v2` (validate inline; one fix/top-up retry; partial success + `short_questions`).",
+        "width": 560,
+        "height": 160,
+        "color": 5
+      }
+    },
+    {
+      "id": "f5494f9e-e074-4f8a-a576-5c079bb55503",
+      "name": "NOTE — DB/Fin",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        3100,
+        40
+      ],
+      "parameters": {
+        "content": "## DB / Fin\nUpsert questions by (subtopic_id, ordinal_in_subtopic) WHERE kind='life_mcq'. Job done + lecture `questions_ready`; counters incl. `short_questions` in jobs.payload.",
+        "width": 480,
+        "height": 160,
+        "color": 5
+      }
+    },
+    {
+      "id": "9ef45942-11b7-4ed4-9489-1fa0b7b73c63",
+      "name": "In — Manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "814e4a07-ddda-48cd-878e-eeb8b6ecd9bf",
+      "name": "In — Execute",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        480
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "37e5018e-4aad-4f00-9dc1-276cc4e9877c",
+      "name": "Run — Init Constants",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        380
+      ],
+      "parameters": {
+        "jsCode": "const input = (items[0] && items[0].json) || {};\nconst constants = {\n  workflow_version: 'psy_05_terms_questions_v1',\n  workflow_name: 'psy_05_terms_questions',\n  llm_model: 'deepseek-flash',\n  thinking: { type: 'disabled' },\n  temperature_terms: 0.2,\n  temperature_questions: 0.5,\n  max_output_tokens: 8000,\n  // DeepSeek peak prices, USD per 1M tokens (conservative; off-peak discount ignored).\n  prices_usd_per_1m: { tier: 'peak', miss: 0.3, hit: 0.006, out: 1.2 },\n  monthly_budget_usd: 5,\n  budget_stop_ratio: 0.8,\n  max_cost_usd_per_lecture: 0.3,\n  chars_per_token: 2,\n  terms_max_input_tokens: 80000,\n  est_output_tokens_terms: 6000,\n  est_output_tokens_questions: 6000,\n  est_input_tokens_questions: 12000,\n  est_subtopics_for_budget: 8,\n  questions_target: 10,\n  max_questions_per_subtopic: 14,\n  questions_transcript_max_chars: 20000,\n  prompt_versions: { terms: 'extract_terms_v2', questions: 'gen_questions_v2' },\n  max_attempts: 3,\n  stale_running_hours: 4,\n};\n// In — Execute may only LOWER these limits (never raise).\n['max_cost_usd_per_lecture', 'monthly_budget_usd'].forEach((key) => {\n  const v = Number(input[key]);\n  if (Number.isFinite(v) && v > 0 && v < constants[key]) constants[key] = v;\n});\nreturn [{ json: { constants }, pairedItem: 0 }];"
+      }
+    },
+    {
+      "id": "a5ec24c2-7946-49f7-9535-dc95fc7ea4ce",
+      "name": "Load — Backfill",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        440,
+        380
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH ins AS (\n  INSERT INTO psy.jobs (lecture_id, step, status, idempotency_key, payload)\n  SELECT l.id, 'terms', 'queued', 'terms:' || l.id::text,\n         jsonb_build_object('workflow_version', $1::text, 'source', 'backfill')\n  FROM psy.lectures l\n  WHERE l.status = 'konspekt_ready'\n  ON CONFLICT (idempotency_key) DO NOTHING\n  RETURNING id\n)\nSELECT count(*)::int AS backfilled FROM ins",
+        "options": {
+          "queryReplacement": "={{ [ $('Run — Init Constants').first().json.constants.workflow_version ] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "fVodKFRegu3319i0",
+          "name": "psy Supabase (psy_n8n)"
+        }
+      }
+    },
+    {
+      "id": "0c216477-8e5f-44da-abe3-ae7fa82e11b9",
+      "name": "Run — Create Job",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        660,
+        380
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE psy.jobs j\nSET status = 'running',\n    attempts = attempts + 1,\n    started_at = now(),\n    error = NULL,\n    payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('workflow_version', $1, 'claimed_at', now())\nWHERE j.id = (\n  SELECT id FROM psy.jobs\n  WHERE step = 'terms'\n    AND attempts < 3\n    AND (\n      status = 'queued'\n      OR (status = 'running' AND started_at < now() - interval '4 hours')\n    )\n  ORDER BY created_at\n  LIMIT 1\n  FOR UPDATE SKIP LOCKED\n)\nRETURNING j.*",
+        "options": {
+          "queryReplacement": "={{ [ $('Run — Init Constants').first().json.constants.workflow_version ] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "fVodKFRegu3319i0",
+          "name": "psy Supabase (psy_n8n)"
+        }
+      }
+    },
+    {
+      "id": "d03e2bc6-8a65-42af-9866-377f5ce1bf25",
+      "name": "Run — Has Job",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        380
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "dec821ec-3e1d-443e-a9b4-a279cbb6e09e",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "992b0cd6-271f-4467-96f3-fbb3cac007d3",
+      "name": "Load — Lecture",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1100,
+        300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  j.id AS job_id,\n  j.lecture_id,\n  j.attempts,\n  l.course_id,\n  l.title,\n  l.duration_sec,\n  l.lecturer_name,\n  l.status AS lecture_status,\n  COALESCE(lt.konspekt_md, '') AS konspekt_md,\n  COALESCE(lt.transcript, '') AS transcript,\n  COALESCE((\n    SELECT jsonb_agg(jsonb_build_object('ordinal', c.ordinal, 'text', c.text) ORDER BY c.ordinal)\n    FROM psy.chunks c WHERE c.lecture_id = l.id\n  ), '[]'::jsonb) AS chunks,\n  COALESCE((\n    SELECT string_agg(g.canonical, ', ' ORDER BY g.canonical)\n    FROM psy.glossary_terms g WHERE g.course_id = l.course_id\n  ), '') AS glossary,\n  (\n    SELECT count(*) FROM psy.cards c\n    JOIN psy.questions q ON q.id = c.question_id\n    WHERE q.lecture_id = l.id\n  )::int AS cards_count,\n  COALESCE((\n    SELECT sum(u.cost_usd) FROM psy.llm_usage u\n    WHERE u.created_at >= date_trunc('month', now())\n  ), 0)::float8 AS spent_month_usd,\n  COALESCE((\n    SELECT sum(u.cost_usd) FROM psy.llm_usage u WHERE u.lecture_id = l.id\n  ), 0)::float8 AS spent_lecture_usd\nFROM psy.jobs j\nJOIN psy.lectures l ON l.id = j.lecture_id\nLEFT JOIN psy.lecture_texts lt ON lt.lecture_id = l.id\nWHERE j.id = $1::uuid",
+        "options": {
+          "queryReplacement": "={{ [ $('Run — Create Job').first().json.id ] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "fVodKFRegu3319i0",
+          "name": "psy Supabase (psy_n8n)"
+        }
+      }
+    },
+    {
+      "id": "dad6d005-fe22-4631-9cdd-ca8968bb077d",
+      "name": "Load — No Cards",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1320,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "7fa9d455-c7cb-4d1b-acfd-ca751735fcf8",
+              "leftValue": "={{ String($json.cards_count) }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "1fa8e104-0180-42f9-a4bb-1706751924ef",
+      "name": "Load — Has Konspekt",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1540,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "b19e072e-6f56-4a36-9b33-568e1efa9583",
+              "leftValue": "={{ String($json.konspekt_md || '').trim() }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "d61c45fc-8a93-433f-bee9-b74e9e4d6a29",
+      "name": "LLM — Build Terms Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        220
+      ],
+      "parameters": {
+        "jsCode": "const C = $('Run — Init Constants').first().json.constants;\nconst row = items[0].json;\nconst SYSTEM = \"Ты выделяешь подтемы и термины одной лекции. Источник — только блоки этого сообщения. Не добавляй понятия, определения и примеры из других лекций и из общих знаний.\\n\\nВход:\\nМЕТАДАННЫЕ\\nГЛОССАРИЙ — уже известные написания, может быть пуст\\nКОНСПЕКТ\\nТРАНСКРИПТ\\n\\nПравила:\\n- Подтема — отдельный учебный узел этой лекции, в порядке изложения. ordinal с 1. Не дроби лекцию на одну подтему и не копируй оглавление чужого курса.\\n- Термин — имя понятия, которое лектор здесь употребляет. Бытовые слова, имена людей и разовый пример термином не являются.\\n- definition — только формулировка из этой лекции. Нет формулировки — null. Дыру `[неразборчиво]` не раскрывай.\\n- life_example — 1–2 предложения бытовой ситуации, которая иллюстрирует definition из этой лекции. Не вводит новых фактов. Если definition = null, то life_example = null.\\n- canonical — написание из ГЛОССАРИЙ, если термин там есть; иначе как в конспекте.\\n- aliases — только другие написания из глоссария или явная оговорка лектора. Не выдумывай варианты.\\n- subtopic_ordinal — подтема, в которой термин разбирается. Нет явной подтемы — ближайшая по тексту.\\n\\nОтвет — один JSON-объект без Markdown и без текста вокруг:\\n\\n{\\\"subtopics\\\":[{\\\"ordinal\\\":1,\\\"title\\\":\\\"...\\\"}],\\\"terms\\\":[{\\\"canonical\\\":\\\"...\\\",\\\"aliases\\\":[],\\\"definition\\\":null,\\\"life_example\\\":null,\\\"subtopic_ordinal\\\":1}]}\\n\\nПустая лекция — пустые массивы. Не объясняй ответ.\";\nconst cpt = C.chars_per_token || 2;\nconst est = (s) => Math.ceil(String(s || '').length / cpt);\n\nconst metaLines = ['МЕТАДАННЫЕ', 'Название: ' + (row.title || '[неизвестно]')];\nif (row.duration_sec) metaLines.push('Длительность: ' + Math.round(Number(row.duration_sec) / 60) + ' мин');\nif (row.lecturer_name) metaLines.push('Лектор: ' + row.lecturer_name);\nconst head = [\n  metaLines.join('\\n'),\n  'ГЛОССАРИЙ\\n' + (row.glossary || ''),\n  'КОНСПЕКТ\\n' + String(row.konspekt_md || '').trim(),\n].join('\\n\\n');\n\nlet transcript = String(row.transcript || '').trim();\nlet truncated = false;\nconst room = (C.terms_max_input_tokens - est(SYSTEM) - est(head) - 200) * cpt;\nif (transcript.length > room) {\n  transcript = transcript.slice(0, Math.max(room, 0)) + '\\n[транскрипт усечён по лимиту токенов]';\n  truncated = true;\n}\nconst user = head + '\\n\\nТРАНСКРИПТ\\n' + transcript;\n\nconst P = C.prices_usd_per_1m;\nconst inTokens = est(SYSTEM) + est(user);\nconst termsCost = (inTokens * P.miss + C.est_output_tokens_terms * P.out) / 1e6;\nconst questionCall = (C.est_input_tokens_questions * P.miss + C.est_output_tokens_questions * P.out) / 1e6;\nconst projected = termsCost + C.est_subtopics_for_budget * questionCall;\nconst spentLecture = Number(row.spent_lecture_usd) || 0;\nconst spentMonth = Number(row.spent_month_usd) || 0;\nconst lectureCap = C.max_cost_usd_per_lecture;\nconst monthCap = C.monthly_budget_usd * C.budget_stop_ratio;\nlet reason = null;\nif (spentLecture + projected > lectureCap) {\n  reason = 'budget_exceeded: лимит на лекцию ' + lectureCap + ' USD (потрачено ' + spentLecture.toFixed(4)\n    + ', прогноз терминов+вопросов ' + projected.toFixed(4) + ')';\n} else if (spentMonth + projected > monthCap) {\n  reason = 'budget_exceeded: 80% месячного бюджета ' + C.monthly_budget_usd + ' USD (потрачено '\n    + spentMonth.toFixed(4) + ', прогноз ' + projected.toFixed(4) + ')';\n}\nif (reason) {\n  return [{ json: { budget_exceeded: true, error_message: reason, lecture_id: row.lecture_id, job_id: row.job_id }, pairedItem: 0 }];\n}\nreturn [{\n  json: {\n    budget_exceeded: false,\n    lecture_id: row.lecture_id,\n    job_id: row.job_id,\n    course_id: row.course_id,\n    step: 'terms',\n    prompt_version: C.prompt_versions.terms,\n    transcript_truncated: truncated,\n    projected_cost_usd: Number(projected.toFixed(5)),\n    request_body: {\n      model: C.llm_model,\n      messages: [\n        { role: 'system', content: SYSTEM },\n        { role: 'user', content: user },\n      ],\n      thinking: C.thinking,\n      response_format: { type: 'json_object' },\n      max_tokens: C.max_output_tokens,\n      temperature: C.temperature_terms,\n      stream: false,\n    },\n  },\n  pairedItem: 0,\n}];"
+      }
+    },
+    {
+      "id": "85c901b1-3988-441c-8b07-0d2f2459f299",
+      "name": "LLM — Budget OK Terms",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1980,
+        220
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "0f6d3104-9716-428f-8a11-8fe8e2183c28",
+              "leftValue": "={{ String($json.budget_exceeded) }}",
+              "rightValue": "false",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "f85e0924-dd57-4601-a695-512aea63b623",
+      "name": "Shared — DeepSeek Terms",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2200,
+        140
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.deepseek.com/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "sendBody": true,
+        "options": {
+          "timeout": 900000
+        },
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request_body) }}",
+        "nodeCredentialType": "deepSeekApi"
+      },
+      "credentials": {
+        "deepSeekApi": {
+          "id": "xyaJwQg88odvtCfC",
+          "name": "DeepSeek account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "1e55ac2a-03a5-4821-ba56-1ce3b0c05907",
+      "name": "LLM — Parse Terms",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        140
+      ],
+      "parameters": {
+        "jsCode": "const C = $('Run — Init Constants').first().json.constants;\nconst src = $('LLM — Build Terms Request').first().json;\nfunction parseDeepSeek(resp, C, src, step, promptVersion) {\n  const r = resp || {};\n  const choice = (r.choices && r.choices[0]) || {};\n  const content = String((choice.message && choice.message.content) || '');\n  const u = r.usage || {};\n  const hit = Number(u.prompt_cache_hit_tokens != null\n    ? u.prompt_cache_hit_tokens\n    : ((u.prompt_tokens_details && u.prompt_tokens_details.cached_tokens) || 0)) || 0;\n  let miss = u.prompt_cache_miss_tokens != null ? Number(u.prompt_cache_miss_tokens) : null;\n  const promptTokens = Number(u.prompt_tokens != null ? u.prompt_tokens : ((miss || 0) + hit)) || 0;\n  if (miss == null || !Number.isFinite(miss)) miss = Math.max(promptTokens - hit, 0);\n  const completion = Number(u.completion_tokens) || 0;\n  const P = C.prices_usd_per_1m;\n  const costExact = (miss * P.miss + hit * P.hit + completion * P.out) / 1e6;\n  return {\n    content,\n    finish_reason: choice.finish_reason || null,\n    cost_exact: costExact,\n    usage_row: {\n      lecture_id: src.lecture_id,\n      job_id: src.job_id,\n      workflow_name: C.workflow_name,\n      workflow_version: C.workflow_version,\n      model: r.model || C.llm_model,\n      prompt_tokens: promptTokens,\n      completion_tokens: completion,\n      cost_usd: Number(costExact.toFixed(6)),\n      prompt_version: promptVersion,\n      prompt_cache_hit_tokens: hit,\n      step,\n    },\n  };\n}\nconst p = parseDeepSeek(items[0].json, C, src, 'terms', C.prompt_versions.terms);\n\nfunction parseJson(text) {\n  let t = String(text || '').trim();\n  const m = t.match(/^```(?:json)?\\s*([\\s\\S]*?)\\s*```$/);\n  if (m) t = m[1];\n  try {\n    return { value: JSON.parse(t) };\n  } catch (e) {\n    const a = t.indexOf('{');\n    const b = t.lastIndexOf('}');\n    if (a >= 0 && b > a) {\n      try {\n        return { value: JSON.parse(t.slice(a, b + 1)) };\n      } catch (e2) {\n        /* fall through */\n      }\n    }\n    return { error: 'invalid_json' };\n  }\n}\n\nconst result = {\n  lecture_id: src.lecture_id,\n  job_id: src.job_id,\n  usage_row: p.usage_row,\n  cost_exact: p.cost_exact,\n  finish_reason: p.finish_reason,\n  transcript_truncated: src.transcript_truncated,\n  ok: false,\n  error_message: null,\n  subtopics: [],\n  terms: [],\n};\n\nfunction fail(msg) {\n  result.error_message = msg;\n  return [{ json: result, pairedItem: 0 }];\n}\n\nif (!p.content.trim()) return fail('llm_empty_response (terms)');\nconst pj = parseJson(p.content);\nif (pj.error) {\n  return fail(p.finish_reason === 'length' ? 'llm_truncated: finish_reason=length (terms)' : 'terms: invalid_json');\n}\nconst data = pj.value;\nif (!data || typeof data !== 'object' || !Array.isArray(data.subtopics) || !Array.isArray(data.terms)) {\n  return fail('terms: schema (нужны subtopics[] и terms[])');\n}\n\nconst subs = [];\nconst seen = new Set();\nfor (const s of data.subtopics) {\n  const ordinal = Number(s && s.ordinal);\n  const title = String((s && s.title) || '').trim();\n  if (!Number.isInteger(ordinal) || ordinal < 1 || !title || seen.has(ordinal)) continue;\n  seen.add(ordinal);\n  subs.push({ ordinal, title });\n}\nsubs.sort((a, b) => a.ordinal - b.ordinal);\nif (!subs.length) return fail('terms: empty_subtopics');\n\nconst byKey = new Map();\nfor (const t of data.terms) {\n  const canonical = String((t && t.canonical) || '').trim();\n  if (!canonical) continue;\n  const aliases = Array.isArray(t.aliases)\n    ? t.aliases.map((a) => String(a || '').trim()).filter((a) => a && a !== canonical)\n    : [];\n  let definition = t.definition == null ? null : String(t.definition).trim() || null;\n  let lifeExample = definition && t.life_example != null ? String(t.life_example).trim() || null : null;\n  let so = Number(t.subtopic_ordinal);\n  if (!seen.has(so)) {\n    const lower = subs.filter((s) => s.ordinal <= so).pop();\n    so = lower ? lower.ordinal : subs[0].ordinal;\n  }\n  const key = canonical.toLowerCase();\n  if (byKey.has(key)) {\n    const prev = byKey.get(key);\n    prev.aliases = Array.from(new Set(prev.aliases.concat(aliases)));\n    if (!prev.definition && definition) {\n      prev.definition = definition;\n      prev.life_example = lifeExample;\n    }\n    continue;\n  }\n  byKey.set(key, { canonical, aliases: Array.from(new Set(aliases)), definition, life_example: lifeExample, subtopic_ordinal: so });\n}\nconst terms = Array.from(byKey.values());\nif (!terms.length) return fail('terms: empty_terms');\n\nresult.ok = true;\nresult.subtopics = subs;\nresult.terms = terms;\nreturn [{ json: result, pairedItem: 0 }];"
+      }
+    },
+    {
+      "id": "5baa7703-867a-47aa-acd4-e7c032076014",
+      "name": "DB — Log Usage Terms",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2640,
+        140
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO psy.llm_usage (\n  lecture_id, workflow_name, model, prompt_tokens, completion_tokens, cost_usd,\n  prompt_version, workflow_version, job_id, prompt_cache_hit_tokens, step\n) VALUES (\n  $1::uuid, $2, $3, $4::int, $5::int, $6::numeric,\n  $7, $8, $9::uuid, $10::int, $11\n)\nRETURNING id",
+        "options": {
+          "queryReplacement": "={{ [\n  $json.usage_row.lecture_id,\n  $json.usage_row.workflow_name,\n  $json.usage_row.model,\n  $json.usage_row.prompt_tokens,\n  $json.usage_row.completion_tokens,\n  $json.usage_row.cost_usd,\n  $json.usage_row.prompt_version,\n  $json.usage_row.workflow_version,\n  $json.usage_row.job_id,\n  $json.usage_row.prompt_cache_hit_tokens,\n  $json.usage_row.step\n] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "fVodKFRegu3319i0",
+          "name": "psy Supabase (psy_n8n)"
+        }
+      }
+    },
+    {
+      "id": "86c20b39-3923-4494-abed-63f53b2866dc",
+      "name": "LLM — Terms Ready",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        140
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: $('LLM — Parse Terms').first().json, pairedItem: 0 }];"
+      }
+    },
+    {
+      "id": "9d3d26e2-93e7-4354-b59c-800cc22401c4",
+      "name": "LLM — Terms OK",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3080,
+        140
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "06b4999c-68bc-47a1-a786-61836981b9d8",
+              "leftValue": "={{ String($json.ok) }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "6bca2909-cbec-4eb2-b125-17d90733f42a",
+      "name": "DB — Upsert Terms",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3300,
+        140
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH params AS (\n  SELECT $1::uuid AS course_id, $2::uuid AS lecture_id, $3::jsonb AS terms\n), src AS (\n  SELECT t.canonical, t.aliases, t.definition, t.life_example\n  FROM params p\n  CROSS JOIN LATERAL jsonb_to_recordset(p.terms) AS t(\n    canonical text, aliases jsonb, definition text, life_example text\n  )\n), up AS (\n  INSERT INTO psy.glossary_terms AS g (course_id, lecture_id, canonical, aliases, definition, life_example)\n  SELECT p.course_id, p.lecture_id, s.canonical,\n         ARRAY(SELECT jsonb_array_elements_text(COALESCE(s.aliases, '[]'::jsonb))),\n         s.definition, s.life_example\n  FROM params p\n  CROSS JOIN src s\n  ON CONFLICT (course_id, canonical) DO UPDATE SET\n    lecture_id = COALESCE(g.lecture_id, EXCLUDED.lecture_id),\n    aliases = ARRAY(\n      SELECT DISTINCT a\n      FROM unnest(g.aliases || EXCLUDED.aliases) AS a\n      WHERE btrim(a) <> '' AND a <> g.canonical\n      ORDER BY a\n    ),\n    definition = CASE\n      WHEN NULLIF(btrim(g.definition), '') IS NULL THEN EXCLUDED.definition\n      WHEN g.lecture_id IS NOT DISTINCT FROM EXCLUDED.lecture_id AND EXCLUDED.definition IS NOT NULL\n        THEN EXCLUDED.definition\n      ELSE g.definition\n    END,\n    life_example = CASE\n      WHEN NULLIF(btrim(g.definition), '') IS NULL THEN EXCLUDED.life_example\n      WHEN g.lecture_id IS NOT DISTINCT FROM EXCLUDED.lecture_id AND EXCLUDED.definition IS NOT NULL\n        THEN EXCLUDED.life_example\n      ELSE g.life_example\n    END\n  RETURNING g.id\n)\nSELECT count(*)::int AS terms_upserted FROM up",
+        "options": {
+          "queryReplacement": "={{ [\n  $('Load — Lecture').first().json.course_id,\n  $('Load — Lecture').first().json.lecture_id,\n  JSON.stringify($('LLM — Parse Terms').first().json.terms)\n] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "fVodKFRegu3319i0",
+          "name": "psy Supabase (psy_n8n)"
+        }
+      }
+    },
+    {
+      "id": "e83b3733-bd0e-49aa-abf0-8e2da63d1217",
+      "name": "DB — Upsert Subtopics",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3520,
+        140
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH params AS (\n  SELECT $1::uuid AS lecture_id, $2::jsonb AS subtopics\n), ins AS (\n  INSERT INTO psy.subtopics (lecture_id, ordinal, title)\n  SELECT p.lecture_id, s.ordinal, s.title\n  FROM params p\n  CROSS JOIN LATERAL jsonb_to_recordset(p.subtopics) AS s(ordinal int, title text)\n  ON CONFLICT (lecture_id, ordinal) DO UPDATE SET title = EXCLUDED.title\n  RETURNING id, ordinal, title\n), del AS (\n  DELETE FROM psy.subtopics st\n  USING params p\n  WHERE st.lecture_id = p.lecture_id\n    AND st.ordinal NOT IN (SELECT ordinal FROM ins)\n    AND NOT EXISTS (\n      SELECT 1 FROM psy.cards c\n      JOIN psy.questions q ON q.id = c.question_id\n      WHERE q.lecture_id = p.lecture_id\n    )\n  RETURNING st.id\n)\nSELECT i.id AS subtopic_id, i.ordinal, i.title, (SELECT count(*) FROM del)::int AS deleted_subtopics\nFROM ins i\nORDER BY i.ordinal",
+        "options": {
+          "queryReplacement": "={{ [\n  $('Load — Lecture').first().json.lecture_id,\n  JSON.stringify($('LLM — Parse Terms').first().json.subtopics)\n] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "fVodKFRegu3319i0",
+          "name": "psy Supabase (psy_n8n)"
+        }
+      }
+    },
+    {
+      "id": "07b161e1-d00e-4d0b-8b9f-71119e0a586e",
+      "name": "Run — Loop Subtopics",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        3740,
+        140
+      ],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "43164cf6-32b2-48a5-b8b2-992bb109e9a9",
+      "name": "DB — Load Spend",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3960,
+        220
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  $1::uuid AS subtopic_id,\n  $2::int AS ordinal,\n  $3::text AS title,\n  COALESCE((\n    SELECT sum(u.cost_usd) FROM psy.llm_usage u\n    WHERE u.created_at >= date_trunc('month', now())\n  ), 0)::float8 AS spent_month_usd,\n  COALESCE((\n    SELECT sum(u.cost_usd) FROM psy.llm_usage u WHERE u.lecture_id = $4::uuid\n  ), 0)::float8 AS spent_lecture_usd",
+        "options": {
+          "queryReplacement": "={{ [\n  $json.subtopic_id,\n  $json.ordinal,\n  $json.title,\n  $('Load — Lecture').first().json.lecture_id\n] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "fVodKFRegu3319i0",
+          "name": "psy Supabase (psy_n8n)"
+        }
+      }
+    },
+    {
+      "id": "899cce79-17fa-4937-9023-9ec5f9a103c4",
+      "name": "LLM — Build Questions Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4180,
+        220
+      ],
+      "parameters": {
+        "jsCode": "const C = $('Run — Init Constants').first().json.constants;\nconst L = $('Load — Lecture').first().json;\nconst T = $('LLM — Parse Terms').first().json;\nconst sub = items[0].json;\nconst SYSTEM = \"Ты пишешь вопросы с выбором ответа по одной подтеме одной лекции. Сразу JSON, без рассуждений вслух.\\n\\nВход — одна подтема:\\nПОДТЕМА — ordinal и title\\nТЕРМИНЫ — canonical и definition только этой подтемы\\nФРАГМЕНТ КОНСПЕКТА\\nФРАГМЕНТ ТРАНСКРИПТА\\nОПЦИОНАЛЬНО: ОШИБКИ_ВАЛИДАЦИИ или ДОБОР — короткий список, что исправить или сколько вопросов не хватает\\n\\nПиши только по этим блокам. Не переноси факты из других подтем и лекций. Не добавляй термины, цифры, диагнозы и детали случаев, которых во фрагменте нет. `[неразборчиво]` не заполняй.\\n\\nЦель — не меньше 10 вопросов. Каждый — жизненная ситуация: человек и бытовой контекст, затем что из этого следует по лекции. Не спрашивай определение в лоб и не проси назвать термин.\\n\\nЧетыре коротких варианта, A–D, ровно один верный. Верный следует из фрагмента. Неверные — близкая путаница по этой же подтеме. Если фактов мало, меняй ситуации, не факты. Не повторяй один и тот же stem.\\n\\nК каждому варианту — одно короткое предложение: почему он сходится или расходится с лекцией. explanation — 2–4 предложения ученику, который ошибся. Новых фактов нет.\\n\\nterm_canonical — только из списка ТЕРМИНЫ. kind всегда \\\"life_mcq\\\". correct_choice — одна буква A, B, C или D.\\n\\nЕсли честно не набирается 10 вопросов без выдумки, верни сколько есть и \\\"shortfall\\\": true. Не выдумывай факты ради десятки.\\n\\nПеред ответом проверь: один верный, четыре пояснения на месте, нет факта вне фрагмента.\\n\\nОтвет — один JSON без Markdown:\\n\\n{\\\"subtopic_ordinal\\\":1,\\\"shortfall\\\":false,\\\"questions\\\":[{\\\"term_canonical\\\":\\\"...\\\",\\\"kind\\\":\\\"life_mcq\\\",\\\"stem\\\":\\\"...\\\",\\\"choice_a\\\":\\\"...\\\",\\\"choice_b\\\":\\\"...\\\",\\\"choice_c\\\":\\\"...\\\",\\\"choice_d\\\":\\\"...\\\",\\\"correct_choice\\\":\\\"A\\\",\\\"explanation\\\":\\\"...\\\",\\\"explanation_a\\\":\\\"...\\\",\\\"explanation_b\\\":\\\"...\\\",\\\"explanation_c\\\":\\\"...\\\",\\\"explanation_d\\\":\\\"...\\\"}]}\";\nconst cpt = C.chars_per_token || 2;\nconst est = (s) => Math.ceil(String(s || '').length / cpt);\n\nconst norm = (s) => String(s || '').toLowerCase().replace(/ё/g, 'е');\nfunction stems(phrase) {\n  return norm(phrase)\n    .split(/[^а-яa-z0-9]+/)\n    .filter((w) => w.length >= 4)\n    .map((w) => w.slice(0, Math.max(4, w.length - 2)));\n}\nfunction matcher(names) {\n  const sets = names.map(stems).filter((s) => s.length);\n  const plain = names.map(norm).filter((p) => p && p.length < 4);\n  return (text) => {\n    const t = norm(text);\n    if (sets.some((set) => set.every((s) => t.includes(s)))) return true;\n    return plain.some((p) => t.includes(p));\n  };\n}\n\nconst subTerms = T.terms.filter((t) => t.subtopic_ordinal === sub.ordinal && t.definition);\nconst base = {\n  lecture_id: L.lecture_id,\n  job_id: L.job_id,\n  course_id: L.course_id,\n  subtopic_id: sub.subtopic_id,\n  ordinal: sub.ordinal,\n  title: sub.title,\n  spent_month_usd: Number(sub.spent_month_usd) || 0,\n  spent_lecture_usd: Number(sub.spent_lecture_usd) || 0,\n  term_canonicals: subTerms.map((t) => t.canonical),\n  existing_stems: [],\n  step: 'questions',\n  prompt_version: C.prompt_versions.questions,\n};\nif (!subTerms.length) {\n  return [{ json: { ...base, skip: true, budget_exceeded: false, skip_reason: 'no_terms_with_definition' }, pairedItem: 0 }];\n}\n\n// --- konspekt fragment: sections that mention the subtopic's terms / title words\nconst konspekt = String(L.konspekt_md || '').trim();\nconst termNames = subTerms.flatMap((t) => [t.canonical].concat(t.aliases || []));\nconst termMatch = matcher(termNames);\nconst titleStems = stems(sub.title);\nconst sections = konspekt.split(/\\n(?=##\\s)/);\nconst scored = sections.map((text, idx) => {\n  const t = norm(text);\n  let score = subTerms.filter((st) => matcher([st.canonical].concat(st.aliases || []))(text)).length * 2;\n  score += titleStems.filter((s) => t.includes(s)).length;\n  return { idx, text, score };\n});\nlet picked = scored.filter((s) => s.score > 0).sort((a, b) => b.score - a.score).slice(0, 3).sort((a, b) => a.idx - b.idx);\nlet konspektFragment = picked.length ? picked.map((s) => s.text).join('\\n\\n') : konspekt;\nif (konspektFragment.length > 12000) konspektFragment = konspektFragment.slice(0, 12000);\n\n// --- transcript fragment: segments mentioning the terms (+/- 1 neighbour), capped\nlet segs = (Array.isArray(L.chunks) ? L.chunks : []).map((c) => String((c && c.text) || '').trim());\nif (!segs.filter(Boolean).length) {\n  const tr = String(L.transcript || '');\n  segs = [];\n  for (let i = 0; i < tr.length; i += 1000) segs.push(tr.slice(i, i + 1000));\n}\nconst hit = new Set();\nsegs.forEach((text, i) => {\n  if (text && termMatch(text)) {\n    hit.add(i);\n    if (i > 0) hit.add(i - 1);\n    if (i + 1 < segs.length) hit.add(i + 1);\n  }\n});\nconst order = Array.from(hit).sort((a, b) => a - b);\nconst parts = [];\nlet used = 0;\nfor (const i of order) {\n  const text = segs[i];\n  if (!text) continue;\n  if (used + text.length > C.questions_transcript_max_chars) break;\n  parts.push(text);\n  used += text.length + 1;\n}\nconst transcriptFragment = parts.length ? parts.join('\\n') : '[фрагмент не найден — опирайся только на конспект]';\n\nconst termsBlock = subTerms.map((t) => '- ' + t.canonical + ': ' + t.definition).join('\\n');\nconst user = [\n  'ПОДТЕМА\\n' + sub.ordinal + '. ' + sub.title,\n  'ТЕРМИНЫ\\n' + termsBlock,\n  'ФРАГМЕНТ КОНСПЕКТА\\n' + konspektFragment,\n  'ФРАГМЕНТ ТРАНСКРИПТА\\n' + transcriptFragment,\n].join('\\n\\n');\n\nconst P = C.prices_usd_per_1m;\nconst inTokens = est(SYSTEM) + est(user);\nconst projected = (inTokens * P.miss + C.est_output_tokens_questions * P.out) / 1e6;\nconst lectureCap = C.max_cost_usd_per_lecture;\nconst monthCap = C.monthly_budget_usd * C.budget_stop_ratio;\nlet reason = null;\nif (base.spent_lecture_usd + projected > lectureCap) {\n  reason = 'budget_exceeded: лимит на лекцию ' + lectureCap + ' USD перед подтемой ' + sub.ordinal\n    + ' (потрачено ' + base.spent_lecture_usd.toFixed(4) + ')';\n} else if (base.spent_month_usd + projected > monthCap) {\n  reason = 'budget_exceeded: 80% месячного бюджета ' + C.monthly_budget_usd + ' USD перед подтемой ' + sub.ordinal\n    + ' (потрачено ' + base.spent_month_usd.toFixed(4) + ')';\n}\nif (reason) {\n  return [{ json: { ...base, skip: false, budget_exceeded: true, error_message: reason }, pairedItem: 0 }];\n}\nreturn [{\n  json: {\n    ...base,\n    skip: false,\n    budget_exceeded: false,\n    est_input_tokens: inTokens,\n    user_base: user,\n    request_body: {\n      model: C.llm_model,\n      messages: [\n        { role: 'system', content: SYSTEM },\n        { role: 'user', content: user },\n      ],\n      thinking: C.thinking,\n      response_format: { type: 'json_object' },\n      max_tokens: C.max_output_tokens,\n      temperature: C.temperature_questions,\n      stream: false,\n    },\n  },\n  pairedItem: 0,\n}];"
+      }
+    },
+    {
+      "id": "61325311-3feb-4b2e-aba4-5fa6fe0e4118",
+      "name": "LLM — Budget OK Questions",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4400,
+        220
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "610f3bc6-67f9-44fb-88bf-0e0c7707e9bc",
+              "leftValue": "={{ String($json.budget_exceeded) }}",
+              "rightValue": "false",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "7719333e-834a-42ed-a5a4-8440b58c0252",
+      "name": "LLM — Has Terms",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4620,
+        220
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "aaeef0d0-b70b-43c3-9aa3-9c53423cccd0",
+              "leftValue": "={{ String($json.skip) }}",
+              "rightValue": "false",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "34ac8fc9-0747-42f6-8d07-6eb22d30c0ab",
+      "name": "Shared — DeepSeek Questions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        4840,
+        140
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.deepseek.com/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "sendBody": true,
+        "options": {
+          "timeout": 900000
+        },
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request_body) }}",
+        "nodeCredentialType": "deepSeekApi"
+      },
+      "credentials": {
+        "deepSeekApi": {
+          "id": "xyaJwQg88odvtCfC",
+          "name": "DeepSeek account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "87eba03a-adeb-46a0-aa1d-9877f9852b9e",
+      "name": "LLM — Parse Questions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5060,
+        140
+      ],
+      "parameters": {
+        "jsCode": "const C = $('Run — Init Constants').first().json.constants;\nconst b = $('LLM — Build Questions Request').first().json;\nfunction parseDeepSeek(resp, C, src, step, promptVersion) {\n  const r = resp || {};\n  const choice = (r.choices && r.choices[0]) || {};\n  const content = String((choice.message && choice.message.content) || '');\n  const u = r.usage || {};\n  const hit = Number(u.prompt_cache_hit_tokens != null\n    ? u.prompt_cache_hit_tokens\n    : ((u.prompt_tokens_details && u.prompt_tokens_details.cached_tokens) || 0)) || 0;\n  let miss = u.prompt_cache_miss_tokens != null ? Number(u.prompt_cache_miss_tokens) : null;\n  const promptTokens = Number(u.prompt_tokens != null ? u.prompt_tokens : ((miss || 0) + hit)) || 0;\n  if (miss == null || !Number.isFinite(miss)) miss = Math.max(promptTokens - hit, 0);\n  const completion = Number(u.completion_tokens) || 0;\n  const P = C.prices_usd_per_1m;\n  const costExact = (miss * P.miss + hit * P.hit + completion * P.out) / 1e6;\n  return {\n    content,\n    finish_reason: choice.finish_reason || null,\n    cost_exact: costExact,\n    usage_row: {\n      lecture_id: src.lecture_id,\n      job_id: src.job_id,\n      workflow_name: C.workflow_name,\n      workflow_version: C.workflow_version,\n      model: r.model || C.llm_model,\n      prompt_tokens: promptTokens,\n      completion_tokens: completion,\n      cost_usd: Number(costExact.toFixed(6)),\n      prompt_version: promptVersion,\n      prompt_cache_hit_tokens: hit,\n      step,\n    },\n  };\n}\n/**\n * Validate gen_questions_v2 JSON for one subtopic.\n * Pure function — no I/O. Used from n8n Code node and node:test.\n */\n\nfunction normalizeChoice(text) {\n  return String(text || '')\n    .toLowerCase()\n    .replace(/[\\s\\u00a0]+/g, ' ')\n    .replace(/[.,;:!?…]+$/g, '')\n    .trim();\n}\n\nfunction normalizeStem(text) {\n  return normalizeChoice(text);\n}\n\n/**\n * @param {unknown} raw parsed JSON (object) or string\n * @param {{ termCanonicals: string[], existingStems?: string[] }} ctx\n * @returns {{ ok: boolean, errors: string[], data?: object, validQuestions?: object[] }}\n */\nfunction validateQuestionsPayload(raw, ctx) {\n  const errors = [];\n  const termSet = new Set((ctx.termCanonicals || []).map((t) => String(t)));\n  const existingStems = new Set((ctx.existingStems || []).map(normalizeStem));\n\n  let data = raw;\n  if (typeof raw === 'string') {\n    try {\n      data = JSON.parse(raw);\n    } catch {\n      return { ok: false, errors: ['invalid_json'] };\n    }\n  }\n\n  if (!data || typeof data !== 'object' || Array.isArray(data)) {\n    return { ok: false, errors: ['not_object'] };\n  }\n\n  const allowedTop = new Set(['subtopic_ordinal', 'shortfall', 'questions']);\n  for (const key of Object.keys(data)) {\n    if (!allowedTop.has(key)) errors.push(`extra_field:${key}`);\n  }\n\n  if (typeof data.subtopic_ordinal !== 'number' || data.subtopic_ordinal < 1) {\n    errors.push('bad_subtopic_ordinal');\n  }\n  if (typeof data.shortfall !== 'boolean') {\n    errors.push('bad_shortfall');\n  }\n  if (!Array.isArray(data.questions)) {\n    errors.push('questions_not_array');\n    return { ok: false, errors };\n  }\n\n  const allowedQ = new Set([\n    'term_canonical',\n    'kind',\n    'stem',\n    'choice_a',\n    'choice_b',\n    'choice_c',\n    'choice_d',\n    'correct_choice',\n    'explanation',\n    'explanation_a',\n    'explanation_b',\n    'explanation_c',\n    'explanation_d',\n  ]);\n\n  const stemsInBatch = new Set();\n  const validQuestions = [];\n\n  data.questions.forEach((q, idx) => {\n    const prefix = `q${idx}`;\n    if (!q || typeof q !== 'object' || Array.isArray(q)) {\n      errors.push(`${prefix}:not_object`);\n      return;\n    }\n    for (const key of Object.keys(q)) {\n      if (!allowedQ.has(key)) errors.push(`${prefix}:extra_field:${key}`);\n    }\n\n    const required = [...allowedQ];\n    for (const key of required) {\n      if (q[key] === undefined || q[key] === null || q[key] === '') {\n        errors.push(`${prefix}:missing:${key}`);\n      }\n    }\n\n    if (q.kind !== 'life_mcq') errors.push(`${prefix}:bad_kind`);\n    if (!['A', 'B', 'C', 'D'].includes(q.correct_choice)) {\n      errors.push(`${prefix}:bad_correct_choice`);\n    }\n    if (!termSet.has(String(q.term_canonical || ''))) {\n      errors.push(`${prefix}:unknown_term:${q.term_canonical}`);\n    }\n\n    const choices = [q.choice_a, q.choice_b, q.choice_c, q.choice_d].map(normalizeChoice);\n    if (choices.some((c) => !c)) errors.push(`${prefix}:empty_choice`);\n    if (new Set(choices).size !== 4) errors.push(`${prefix}:duplicate_choices`);\n\n    const correctIdx = { A: 0, B: 1, C: 2, D: 3 }[q.correct_choice];\n    if (correctIdx != null) {\n      const correctText = choices[correctIdx];\n      choices.forEach((c, i) => {\n        if (i !== correctIdx && c === correctText) {\n          errors.push(`${prefix}:correct_duplicated_in_other`);\n        }\n      });\n    }\n\n    for (const letter of ['a', 'b', 'c', 'd']) {\n      if (!String(q[`explanation_${letter}`] || '').trim()) {\n        errors.push(`${prefix}:missing_explanation_${letter}`);\n      }\n    }\n    if (!String(q.explanation || '').trim()) errors.push(`${prefix}:missing_explanation`);\n\n    const stemNorm = normalizeStem(q.stem);\n    if (!stemNorm) errors.push(`${prefix}:empty_stem`);\n    if (stemsInBatch.has(stemNorm) || existingStems.has(stemNorm)) {\n      errors.push(`${prefix}:duplicate_stem`);\n    }\n    stemsInBatch.add(stemNorm);\n\n    const qErrors = errors.filter((e) => e.startsWith(`${prefix}:`));\n    if (qErrors.length === 0) validQuestions.push(q);\n  });\n\n  if (data.questions.length < 10) {\n    errors.push('lt_10_questions');\n  }\n  if (data.shortfall === true) {\n    errors.push('shortfall_true');\n  }\n\n  const hardFail = errors.some(\n    (e) =>\n      e === 'invalid_json' ||\n      e === 'not_object' ||\n      e === 'questions_not_array' ||\n      e.startsWith('extra_field:') ||\n      e === 'bad_subtopic_ordinal' ||\n      e === 'bad_shortfall',\n  );\n\n  // Schema/JSON hard errors → not ok. Soft: lt_10 / shortfall / per-question → ok=false but validQuestions kept.\n  const ok =\n    !hardFail &&\n    errors.filter((e) => e !== 'lt_10_questions' && e !== 'shortfall_true' && !e.startsWith('q')).length === 0 &&\n    validQuestions.length === data.questions.length &&\n    data.questions.length >= 10 &&\n    data.shortfall === false;\n\n  return {\n    ok,\n    errors,\n    data,\n    validQuestions,\n    shortfall: data.shortfall === true || validQuestions.length < 10,\n  };\n}\n\nfunction parseJson(text) {\n  let t = String(text || '').trim();\n  const m = t.match(/^```(?:json)?\\s*([\\s\\S]*?)\\s*```$/);\n  if (m) t = m[1];\n  try {\n    return { value: JSON.parse(t) };\n  } catch (e) {\n    const a = t.indexOf('{');\n    const z = t.lastIndexOf('}');\n    if (a >= 0 && z > a) {\n      try {\n        return { value: JSON.parse(t.slice(a, z + 1)) };\n      } catch (e2) {\n        /* fall through */\n      }\n    }\n    return { error: 'invalid_json' };\n  }\n}\n\nconst p = parseDeepSeek(items[0].json, C, b, 'questions', C.prompt_versions.questions);\nlet validation;\nif (!p.content.trim()) {\n  validation = { ok: false, errors: ['invalid_json', 'llm_empty_response'], validQuestions: [] };\n} else {\n  const pj = parseJson(p.content);\n  if (pj.error) {\n    validation = {\n      ok: false,\n      errors: ['invalid_json'].concat(p.finish_reason === 'length' ? ['llm_truncated'] : []),\n      validQuestions: [],\n    };\n  } else {\n    validation = validateQuestionsPayload(pj.value, {\n      termCanonicals: b.term_canonicals,\n      existingStems: b.existing_stems || [],\n    });\n  }\n}\nreturn [{\n  json: {\n    usage_row: p.usage_row,\n    cost_exact: p.cost_exact,\n    finish_reason: p.finish_reason,\n    validation_ok: Boolean(validation.ok),\n    errors: validation.errors || [],\n    valid_questions: validation.validQuestions || [],\n  },\n  pairedItem: 0,\n}];"
+      }
+    },
+    {
+      "id": "f9d804c7-4262-4bf1-8857-db68c1fb7964",
+      "name": "DB — Log Usage Questions",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        5280,
+        140
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO psy.llm_usage (\n  lecture_id, workflow_name, model, prompt_tokens, completion_tokens, cost_usd,\n  prompt_version, workflow_version, job_id, prompt_cache_hit_tokens, step\n) VALUES (\n  $1::uuid, $2, $3, $4::int, $5::int, $6::numeric,\n  $7, $8, $9::uuid, $10::int, $11\n)\nRETURNING id",
+        "options": {
+          "queryReplacement": "={{ [\n  $json.usage_row.lecture_id,\n  $json.usage_row.workflow_name,\n  $json.usage_row.model,\n  $json.usage_row.prompt_tokens,\n  $json.usage_row.completion_tokens,\n  $json.usage_row.cost_usd,\n  $json.usage_row.prompt_version,\n  $json.usage_row.workflow_version,\n  $json.usage_row.job_id,\n  $json.usage_row.prompt_cache_hit_tokens,\n  $json.usage_row.step\n] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "fVodKFRegu3319i0",
+          "name": "psy Supabase (psy_n8n)"
+        }
+      }
+    },
+    {
+      "id": "57426fd6-3bbc-4c89-8d36-7bd72a949a83",
+      "name": "LLM — Decide Questions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5500,
+        140
+      ],
+      "parameters": {
+        "jsCode": "const C = $('Run — Init Constants').first().json.constants;\nconst b = $('LLM — Build Questions Request').first().json;\nconst p = $('LLM — Parse Questions').first().json;\nfunction finalizeQuestions(list, cap) {\n  return list.slice(0, cap).map((q, i) => ({\n    ordinal: i + 1,\n    term_canonical: q.term_canonical,\n    stem: q.stem,\n    choice_a: q.choice_a,\n    choice_b: q.choice_b,\n    choice_c: q.choice_c,\n    choice_d: q.choice_d,\n    correct_choice: q.correct_choice,\n    explanation: q.explanation,\n    choice_explanations: { A: q.explanation_a, B: q.explanation_b, C: q.explanation_c, D: q.explanation_d },\n  }));\n}\nconst target = C.questions_target;\nconst valid = p.valid_questions || [];\nconst soft = new Set(['lt_10_questions', 'shortfall_true']);\nconst errs = (p.errors || []).filter((e) => !soft.has(e));\nconst base = {\n  lecture_id: b.lecture_id,\n  job_id: b.job_id,\n  course_id: b.course_id,\n  subtopic_id: b.subtopic_id,\n  ordinal: b.ordinal,\n  title: b.title,\n  term_canonicals: b.term_canonicals,\n  spent_month_usd: b.spent_month_usd,\n  spent_lecture_usd: b.spent_lecture_usd,\n  step: 'questions_retry',\n  prompt_version: b.prompt_version,\n  first_cost_usd: p.cost_exact,\n  first_valid_count: valid.length,\n};\nif (valid.length >= target) {\n  return [{ json: { ...base, needs_retry: false, questions_json: JSON.stringify(finalizeQuestions(valid, C.max_questions_per_subtopic)), question_count: Math.min(valid.length, C.max_questions_per_subtopic) }, pairedItem: 0 }];\n}\n\n// one retry: fix (nothing valid) or top-up (some valid); then accept whatever is valid\nconst need = target - valid.length;\nlet extra = '';\nif (errs.length) extra += '\\n\\nОШИБКИ_ВАЛИДАЦИИ\\n' + errs.slice(0, 15).map((e) => '- ' + e).join('\\n');\nif (valid.length) {\n  extra += '\\n\\nДОБОР\\nУже есть ' + valid.length + ' валидных вопросов. Нужно ещё не меньше ' + need\n    + '. Верни в questions только новые вопросы и не повторяй stem из списка:\\n'\n    + valid.map((q) => '- ' + q.stem).join('\\n');\n} else {\n  extra += '\\n\\nДОБОР\\nНужно не меньше ' + target + ' вопросов. Верни полный исправленный JSON.';\n}\nconst msgs = b.request_body.messages;\nconst retryBody = {\n  ...b.request_body,\n  messages: [msgs[0], { role: 'user', content: b.user_base + extra }],\n};\nconst P = C.prices_usd_per_1m;\nconst est = Math.ceil((msgs[0].content.length + b.user_base.length + extra.length) / (C.chars_per_token || 2));\nconst projected = (est * P.miss + C.est_output_tokens_questions * P.out) / 1e6;\nconst spentLecture = b.spent_lecture_usd + p.cost_exact;\nconst spentMonth = b.spent_month_usd + p.cost_exact;\nconst budgetOk = spentLecture + projected <= C.max_cost_usd_per_lecture\n  && spentMonth + projected <= C.monthly_budget_usd * C.budget_stop_ratio;\nif (!budgetOk) {\n  return [{ json: { ...base, needs_retry: false, retry_skipped: 'budget', questions_json: JSON.stringify(finalizeQuestions(valid, C.max_questions_per_subtopic)), question_count: valid.length }, pairedItem: 0 }];\n}\nreturn [{\n  json: {\n    ...base,\n    needs_retry: true,\n    existing_stems: valid.map((q) => q.stem),\n    first_valid: valid,\n    first_errors: errs.slice(0, 15),\n    request_body: retryBody,\n  },\n  pairedItem: 0,\n}];"
+      }
+    },
+    {
+      "id": "2c39f21c-1e9a-4952-af94-5b471ac81827",
+      "name": "LLM — Needs Retry",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        5720,
+        140
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "d5722897-0253-442e-a465-c518fbd7d697",
+              "leftValue": "={{ String($json.needs_retry) }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "78a3afcb-4360-4a16-8650-3da90dc61113",
+      "name": "Shared — DeepSeek Questions Retry",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        5940,
+        40
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.deepseek.com/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "sendBody": true,
+        "options": {
+          "timeout": 900000
+        },
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request_body) }}",
+        "nodeCredentialType": "deepSeekApi"
+      },
+      "credentials": {
+        "deepSeekApi": {
+          "id": "xyaJwQg88odvtCfC",
+          "name": "DeepSeek account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "35b4a74e-c437-4cab-af7d-88996800f333",
+      "name": "LLM — Parse Questions Retry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6160,
+        40
+      ],
+      "parameters": {
+        "jsCode": "const C = $('Run — Init Constants').first().json.constants;\nconst b = $('LLM — Decide Questions').first().json;\nfunction parseDeepSeek(resp, C, src, step, promptVersion) {\n  const r = resp || {};\n  const choice = (r.choices && r.choices[0]) || {};\n  const content = String((choice.message && choice.message.content) || '');\n  const u = r.usage || {};\n  const hit = Number(u.prompt_cache_hit_tokens != null\n    ? u.prompt_cache_hit_tokens\n    : ((u.prompt_tokens_details && u.prompt_tokens_details.cached_tokens) || 0)) || 0;\n  let miss = u.prompt_cache_miss_tokens != null ? Number(u.prompt_cache_miss_tokens) : null;\n  const promptTokens = Number(u.prompt_tokens != null ? u.prompt_tokens : ((miss || 0) + hit)) || 0;\n  if (miss == null || !Number.isFinite(miss)) miss = Math.max(promptTokens - hit, 0);\n  const completion = Number(u.completion_tokens) || 0;\n  const P = C.prices_usd_per_1m;\n  const costExact = (miss * P.miss + hit * P.hit + completion * P.out) / 1e6;\n  return {\n    content,\n    finish_reason: choice.finish_reason || null,\n    cost_exact: costExact,\n    usage_row: {\n      lecture_id: src.lecture_id,\n      job_id: src.job_id,\n      workflow_name: C.workflow_name,\n      workflow_version: C.workflow_version,\n      model: r.model || C.llm_model,\n      prompt_tokens: promptTokens,\n      completion_tokens: completion,\n      cost_usd: Number(costExact.toFixed(6)),\n      prompt_version: promptVersion,\n      prompt_cache_hit_tokens: hit,\n      step,\n    },\n  };\n}\n/**\n * Validate gen_questions_v2 JSON for one subtopic.\n * Pure function — no I/O. Used from n8n Code node and node:test.\n */\n\nfunction normalizeChoice(text) {\n  return String(text || '')\n    .toLowerCase()\n    .replace(/[\\s\\u00a0]+/g, ' ')\n    .replace(/[.,;:!?…]+$/g, '')\n    .trim();\n}\n\nfunction normalizeStem(text) {\n  return normalizeChoice(text);\n}\n\n/**\n * @param {unknown} raw parsed JSON (object) or string\n * @param {{ termCanonicals: string[], existingStems?: string[] }} ctx\n * @returns {{ ok: boolean, errors: string[], data?: object, validQuestions?: object[] }}\n */\nfunction validateQuestionsPayload(raw, ctx) {\n  const errors = [];\n  const termSet = new Set((ctx.termCanonicals || []).map((t) => String(t)));\n  const existingStems = new Set((ctx.existingStems || []).map(normalizeStem));\n\n  let data = raw;\n  if (typeof raw === 'string') {\n    try {\n      data = JSON.parse(raw);\n    } catch {\n      return { ok: false, errors: ['invalid_json'] };\n    }\n  }\n\n  if (!data || typeof data !== 'object' || Array.isArray(data)) {\n    return { ok: false, errors: ['not_object'] };\n  }\n\n  const allowedTop = new Set(['subtopic_ordinal', 'shortfall', 'questions']);\n  for (const key of Object.keys(data)) {\n    if (!allowedTop.has(key)) errors.push(`extra_field:${key}`);\n  }\n\n  if (typeof data.subtopic_ordinal !== 'number' || data.subtopic_ordinal < 1) {\n    errors.push('bad_subtopic_ordinal');\n  }\n  if (typeof data.shortfall !== 'boolean') {\n    errors.push('bad_shortfall');\n  }\n  if (!Array.isArray(data.questions)) {\n    errors.push('questions_not_array');\n    return { ok: false, errors };\n  }\n\n  const allowedQ = new Set([\n    'term_canonical',\n    'kind',\n    'stem',\n    'choice_a',\n    'choice_b',\n    'choice_c',\n    'choice_d',\n    'correct_choice',\n    'explanation',\n    'explanation_a',\n    'explanation_b',\n    'explanation_c',\n    'explanation_d',\n  ]);\n\n  const stemsInBatch = new Set();\n  const validQuestions = [];\n\n  data.questions.forEach((q, idx) => {\n    const prefix = `q${idx}`;\n    if (!q || typeof q !== 'object' || Array.isArray(q)) {\n      errors.push(`${prefix}:not_object`);\n      return;\n    }\n    for (const key of Object.keys(q)) {\n      if (!allowedQ.has(key)) errors.push(`${prefix}:extra_field:${key}`);\n    }\n\n    const required = [...allowedQ];\n    for (const key of required) {\n      if (q[key] === undefined || q[key] === null || q[key] === '') {\n        errors.push(`${prefix}:missing:${key}`);\n      }\n    }\n\n    if (q.kind !== 'life_mcq') errors.push(`${prefix}:bad_kind`);\n    if (!['A', 'B', 'C', 'D'].includes(q.correct_choice)) {\n      errors.push(`${prefix}:bad_correct_choice`);\n    }\n    if (!termSet.has(String(q.term_canonical || ''))) {\n      errors.push(`${prefix}:unknown_term:${q.term_canonical}`);\n    }\n\n    const choices = [q.choice_a, q.choice_b, q.choice_c, q.choice_d].map(normalizeChoice);\n    if (choices.some((c) => !c)) errors.push(`${prefix}:empty_choice`);\n    if (new Set(choices).size !== 4) errors.push(`${prefix}:duplicate_choices`);\n\n    const correctIdx = { A: 0, B: 1, C: 2, D: 3 }[q.correct_choice];\n    if (correctIdx != null) {\n      const correctText = choices[correctIdx];\n      choices.forEach((c, i) => {\n        if (i !== correctIdx && c === correctText) {\n          errors.push(`${prefix}:correct_duplicated_in_other`);\n        }\n      });\n    }\n\n    for (const letter of ['a', 'b', 'c', 'd']) {\n      if (!String(q[`explanation_${letter}`] || '').trim()) {\n        errors.push(`${prefix}:missing_explanation_${letter}`);\n      }\n    }\n    if (!String(q.explanation || '').trim()) errors.push(`${prefix}:missing_explanation`);\n\n    const stemNorm = normalizeStem(q.stem);\n    if (!stemNorm) errors.push(`${prefix}:empty_stem`);\n    if (stemsInBatch.has(stemNorm) || existingStems.has(stemNorm)) {\n      errors.push(`${prefix}:duplicate_stem`);\n    }\n    stemsInBatch.add(stemNorm);\n\n    const qErrors = errors.filter((e) => e.startsWith(`${prefix}:`));\n    if (qErrors.length === 0) validQuestions.push(q);\n  });\n\n  if (data.questions.length < 10) {\n    errors.push('lt_10_questions');\n  }\n  if (data.shortfall === true) {\n    errors.push('shortfall_true');\n  }\n\n  const hardFail = errors.some(\n    (e) =>\n      e === 'invalid_json' ||\n      e === 'not_object' ||\n      e === 'questions_not_array' ||\n      e.startsWith('extra_field:') ||\n      e === 'bad_subtopic_ordinal' ||\n      e === 'bad_shortfall',\n  );\n\n  // Schema/JSON hard errors → not ok. Soft: lt_10 / shortfall / per-question → ok=false but validQuestions kept.\n  const ok =\n    !hardFail &&\n    errors.filter((e) => e !== 'lt_10_questions' && e !== 'shortfall_true' && !e.startsWith('q')).length === 0 &&\n    validQuestions.length === data.questions.length &&\n    data.questions.length >= 10 &&\n    data.shortfall === false;\n\n  return {\n    ok,\n    errors,\n    data,\n    validQuestions,\n    shortfall: data.shortfall === true || validQuestions.length < 10,\n  };\n}\n\nfunction parseJson(text) {\n  let t = String(text || '').trim();\n  const m = t.match(/^```(?:json)?\\s*([\\s\\S]*?)\\s*```$/);\n  if (m) t = m[1];\n  try {\n    return { value: JSON.parse(t) };\n  } catch (e) {\n    const a = t.indexOf('{');\n    const z = t.lastIndexOf('}');\n    if (a >= 0 && z > a) {\n      try {\n        return { value: JSON.parse(t.slice(a, z + 1)) };\n      } catch (e2) {\n        /* fall through */\n      }\n    }\n    return { error: 'invalid_json' };\n  }\n}\n\nconst p = parseDeepSeek(items[0].json, C, b, 'questions_retry', C.prompt_versions.questions);\nlet validation;\nif (!p.content.trim()) {\n  validation = { ok: false, errors: ['invalid_json', 'llm_empty_response'], validQuestions: [] };\n} else {\n  const pj = parseJson(p.content);\n  if (pj.error) {\n    validation = {\n      ok: false,\n      errors: ['invalid_json'].concat(p.finish_reason === 'length' ? ['llm_truncated'] : []),\n      validQuestions: [],\n    };\n  } else {\n    validation = validateQuestionsPayload(pj.value, {\n      termCanonicals: b.term_canonicals,\n      existingStems: b.existing_stems || [],\n    });\n  }\n}\nreturn [{\n  json: {\n    usage_row: p.usage_row,\n    cost_exact: p.cost_exact,\n    finish_reason: p.finish_reason,\n    validation_ok: Boolean(validation.ok),\n    errors: validation.errors || [],\n    valid_questions: validation.validQuestions || [],\n  },\n  pairedItem: 0,\n}];"
+      }
+    },
+    {
+      "id": "45a0463c-2dfc-4cdf-8ac0-307397fd5005",
+      "name": "DB — Log Usage Questions Retry",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        6380,
+        40
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO psy.llm_usage (\n  lecture_id, workflow_name, model, prompt_tokens, completion_tokens, cost_usd,\n  prompt_version, workflow_version, job_id, prompt_cache_hit_tokens, step\n) VALUES (\n  $1::uuid, $2, $3, $4::int, $5::int, $6::numeric,\n  $7, $8, $9::uuid, $10::int, $11\n)\nRETURNING id",
+        "options": {
+          "queryReplacement": "={{ [\n  $json.usage_row.lecture_id,\n  $json.usage_row.workflow_name,\n  $json.usage_row.model,\n  $json.usage_row.prompt_tokens,\n  $json.usage_row.completion_tokens,\n  $json.usage_row.cost_usd,\n  $json.usage_row.prompt_version,\n  $json.usage_row.workflow_version,\n  $json.usage_row.job_id,\n  $json.usage_row.prompt_cache_hit_tokens,\n  $json.usage_row.step\n] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "fVodKFRegu3319i0",
+          "name": "psy Supabase (psy_n8n)"
+        }
+      }
+    },
+    {
+      "id": "784c14dc-8950-4305-b0a2-8a77d6e78ace",
+      "name": "LLM — Merge Retry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6600,
+        40
+      ],
+      "parameters": {
+        "jsCode": "const C = $('Run — Init Constants').first().json.constants;\nconst d = $('LLM — Decide Questions').first().json;\nconst r = $('LLM — Parse Questions Retry').first().json;\nfunction finalizeQuestions(list, cap) {\n  return list.slice(0, cap).map((q, i) => ({\n    ordinal: i + 1,\n    term_canonical: q.term_canonical,\n    stem: q.stem,\n    choice_a: q.choice_a,\n    choice_b: q.choice_b,\n    choice_c: q.choice_c,\n    choice_d: q.choice_d,\n    correct_choice: q.correct_choice,\n    explanation: q.explanation,\n    choice_explanations: { A: q.explanation_a, B: q.explanation_b, C: q.explanation_c, D: q.explanation_d },\n  }));\n}\nconst merged = (d.first_valid || []).concat(r.valid_questions || []);\nconst finalList = finalizeQuestions(merged, C.max_questions_per_subtopic);\nreturn [{\n  json: {\n    lecture_id: d.lecture_id,\n    job_id: d.job_id,\n    course_id: d.course_id,\n    subtopic_id: d.subtopic_id,\n    ordinal: d.ordinal,\n    title: d.title,\n    retried: true,\n    question_count: finalList.length,\n    questions_json: JSON.stringify(finalList),\n  },\n  pairedItem: 0,\n}];"
+      }
+    },
+    {
+      "id": "4bde7045-1308-4801-a411-9bdc068885c6",
+      "name": "DB — Upsert Questions",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        6820,
+        220
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH params AS (\n  SELECT $1::uuid AS lecture_id, $2::uuid AS subtopic_id, $3::uuid AS course_id, $4::jsonb AS questions\n), src AS (\n  SELECT q.*\n  FROM params p\n  CROSS JOIN LATERAL jsonb_to_recordset(p.questions) AS q(\n    ordinal int, term_canonical text, stem text,\n    choice_a text, choice_b text, choice_c text, choice_d text,\n    correct_choice text, explanation text, choice_explanations jsonb\n  )\n), no_cards AS (\n  SELECT NOT EXISTS (\n    SELECT 1 FROM psy.cards c\n    JOIN psy.questions qq ON qq.id = c.question_id\n    WHERE qq.lecture_id = (SELECT lecture_id FROM params)\n  ) AS ok\n), up AS (\n  INSERT INTO psy.questions (\n    lecture_id, subtopic_id, term_id, stem,\n    choice_a, choice_b, choice_c, choice_d,\n    correct_choice, explanation, choice_explanations, kind, ordinal_in_subtopic\n  )\n  SELECT p.lecture_id, p.subtopic_id, g.id, s.stem,\n         s.choice_a, s.choice_b, s.choice_c, s.choice_d,\n         s.correct_choice, s.explanation, s.choice_explanations, 'life_mcq', s.ordinal\n  FROM params p\n  CROSS JOIN src s\n  JOIN psy.glossary_terms g ON g.course_id = p.course_id AND g.canonical = s.term_canonical\n  WHERE (SELECT ok FROM no_cards)\n  ON CONFLICT (subtopic_id, ordinal_in_subtopic) WHERE (kind = 'life_mcq')\n  DO UPDATE SET\n    term_id = EXCLUDED.term_id,\n    stem = EXCLUDED.stem,\n    choice_a = EXCLUDED.choice_a,\n    choice_b = EXCLUDED.choice_b,\n    choice_c = EXCLUDED.choice_c,\n    choice_d = EXCLUDED.choice_d,\n    correct_choice = EXCLUDED.correct_choice,\n    explanation = EXCLUDED.explanation,\n    choice_explanations = EXCLUDED.choice_explanations\n  RETURNING id\n), del AS (\n  DELETE FROM psy.questions qd\n  USING params p\n  WHERE qd.subtopic_id = p.subtopic_id\n    AND qd.kind = 'life_mcq'\n    AND (SELECT count(*) FROM src) > 0\n    AND qd.ordinal_in_subtopic > (SELECT max(ordinal) FROM src)\n    AND (SELECT ok FROM no_cards)\n  RETURNING qd.id\n)\nSELECT\n  (SELECT count(*) FROM up)::int AS written,\n  (SELECT count(*) FROM del)::int AS deleted,\n  (SELECT ok FROM no_cards) AS no_cards",
+        "options": {
+          "queryReplacement": "={{ [\n  $json.lecture_id,\n  $json.subtopic_id,\n  $json.course_id,\n  $json.questions_json\n] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "fVodKFRegu3319i0",
+          "name": "psy Supabase (psy_n8n)"
+        }
+      }
+    },
+    {
+      "id": "aeb0967b-ace7-4ccb-98a5-a8e8f87ea978",
+      "name": "DB — Finish Job",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3960,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH params AS (\n  SELECT $1::uuid AS lecture_id, $2::uuid AS job_id, $3::text AS workflow_version,\n         $4::int AS terms_count, $5::jsonb AS prompt_versions, $6::boolean AS transcript_truncated\n), counts AS (\n  SELECT st.ordinal, st.title, count(q.id)::int AS n\n  FROM psy.subtopics st\n  LEFT JOIN psy.questions q ON q.subtopic_id = st.id AND q.kind = 'life_mcq'\n  WHERE st.lecture_id = (SELECT lecture_id FROM params)\n  GROUP BY st.id, st.ordinal, st.title\n), agg AS (\n  SELECT\n    COALESCE(sum(n), 0)::int AS total_questions,\n    count(*)::int AS subtopics,\n    COALESCE(\n      jsonb_agg(jsonb_build_object('subtopic_ordinal', ordinal, 'title', title, 'questions', n) ORDER BY ordinal)\n        FILTER (WHERE n < 10),\n      '[]'::jsonb\n    ) AS short_questions\n  FROM counts\n), usage AS (\n  SELECT count(*)::int AS llm_calls, COALESCE(sum(cost_usd), 0)::float8 AS cost_usd\n  FROM psy.llm_usage\n  WHERE job_id = (SELECT job_id FROM params)\n), lec AS (\n  UPDATE psy.lectures l\n  SET status = 'questions_ready', error = NULL\n  FROM params p\n  WHERE l.id = p.lecture_id\n    AND (SELECT total_questions FROM agg) > 0\n    AND l.status IN ('konspekt_ready', 'questions_ready', 'failed')\n  RETURNING l.id\n), done_job AS (\n  UPDATE psy.jobs j\n  SET status = CASE WHEN (SELECT total_questions FROM agg) > 0 THEN 'done' ELSE 'failed' END,\n      finished_at = now(),\n      error = CASE WHEN (SELECT total_questions FROM agg) > 0 THEN NULL ELSE 'no_questions_generated' END,\n      attempts = CASE WHEN (SELECT total_questions FROM agg) > 0 THEN j.attempts ELSE GREATEST(j.attempts, 3) END,\n      payload = COALESCE(j.payload, '{}'::jsonb) || jsonb_build_object(\n        'workflow_version', p.workflow_version,\n        'prompt_versions', p.prompt_versions,\n        'terms_count', p.terms_count,\n        'subtopics_count', (SELECT subtopics FROM agg),\n        'questions_count', (SELECT total_questions FROM agg),\n        'short_questions', (SELECT short_questions FROM agg),\n        'transcript_truncated', p.transcript_truncated,\n        'llm_calls', (SELECT llm_calls FROM usage),\n        'cost_usd', (SELECT cost_usd FROM usage)\n      )\n  FROM params p\n  WHERE j.id = p.job_id\n  RETURNING j.id, j.status\n)\nSELECT\n  (SELECT id FROM lec) AS lecture_id,\n  (SELECT id FROM done_job) AS job_id,\n  (SELECT status FROM done_job) AS job_status,\n  (SELECT total_questions FROM agg) AS questions_count,\n  (SELECT subtopics FROM agg) AS subtopics_count,\n  (SELECT short_questions FROM agg) AS short_questions,\n  (SELECT llm_calls FROM usage) AS llm_calls,\n  (SELECT cost_usd FROM usage) AS cost_usd",
+        "options": {
+          "queryReplacement": "={{ [\n  $('Load — Lecture').first().json.lecture_id,\n  $('Run — Create Job').first().json.id,\n  $('Run — Init Constants').first().json.constants.workflow_version,\n  $('LLM — Parse Terms').first().json.terms.length,\n  JSON.stringify($('Run — Init Constants').first().json.constants.prompt_versions),\n  Boolean($('LLM — Parse Terms').first().json.transcript_truncated)\n] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "fVodKFRegu3319i0",
+          "name": "psy Supabase (psy_n8n)"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "faf38024-4b35-481e-a328-909d4cb60864",
+      "name": "Fin — Fail Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        600
+      ],
+      "parameters": {
+        "jsCode": "const job = $('Run — Create Job').first().json;\nconst e = (items[0] && items[0].json) || {};\nconst err = e.error && typeof e.error === 'object' ? e.error : {};\nlet permanent = false;\nlet keepLecture = false;\nlet message = null;\nif (e.budget_exceeded === true) {\n  permanent = true;\n  keepLecture = true;\n  message = e.error_message || 'budget_exceeded';\n} else if (Number(e.cards_count) > 0) {\n  permanent = true;\n  keepLecture = true;\n  message = 'cards exist, regenerate refused';\n} else if (e.konspekt_md !== undefined && !String(e.konspekt_md || '').trim() && !e.error) {\n  permanent = true;\n  message = 'empty_konspekt: у лекции нет конспекта, LLM не вызывался';\n}\nif (message === null) {\n  message = e.error_message || err.message || (typeof e.error === 'string' ? e.error : null) || e.message\n    || JSON.stringify(e).slice(0, 500);\n}\nmessage = String(message).slice(0, 800);\nlet statusCode = Number(e.statusCode ?? e.httpCode ?? err.httpCode ?? err.status ?? err.statusCode ?? 0);\nif (!Number.isFinite(statusCode)) statusCode = 0;\nif (!statusCode) {\n  const m = message.match(/^(\\d{3})\\b/);\n  if (m) statusCode = Number(m[1]);\n}\nreturn [{\n  json: {\n    job_id: job.id,\n    lecture_id: job.lecture_id,\n    attempts: job.attempts,\n    status_code: statusCode,\n    error_message: message,\n    permanent,\n    keep_lecture: keepLecture,\n  },\n  pairedItem: 0,\n}];"
+      }
+    },
+    {
+      "id": "a2eaa26e-7c1b-4e19-9d13-4fe6d63417dc",
+      "name": "Fin — Fail Job",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2200,
+        600
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH j AS (\n  UPDATE psy.jobs\n  SET status = CASE\n        WHEN $4::boolean THEN 'failed'\n        WHEN $2::int = 409 THEN 'queued'\n        WHEN attempts >= 3 THEN 'failed'\n        ELSE 'queued'\n      END,\n      attempts = CASE\n        WHEN $4::boolean THEN 3\n        WHEN $2::int = 409 THEN GREATEST(attempts - 1, 0)\n        ELSE attempts\n      END,\n      error = $3,\n      finished_at = CASE\n        WHEN $4::boolean OR ($2::int <> 409 AND attempts >= 3) THEN now()\n        ELSE NULL\n      END,\n      started_at = CASE\n        WHEN NOT $4::boolean AND ($2::int = 409 OR attempts < 3) THEN NULL\n        ELSE started_at\n      END\n  WHERE id = $1::uuid\n  RETURNING id, status, attempts, lecture_id\n), lec AS (\n  UPDATE psy.lectures\n  SET status = 'failed', error = $3\n  WHERE id = (SELECT lecture_id FROM j)\n    AND (SELECT status FROM j) = 'failed'\n    AND NOT $5::boolean\n  RETURNING id\n)\nSELECT * FROM j",
+        "options": {
+          "queryReplacement": "={{ [\n  $json.job_id,\n  Number($json.status_code || 0),\n  $json.error_message,\n  Boolean($json.permanent),\n  Boolean($json.keep_lecture)\n] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "fVodKFRegu3319i0",
+          "name": "psy Supabase (psy_n8n)"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "In — Manual": {
+      "main": [
+        [
+          {
+            "node": "Run — Init Constants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "In — Execute": {
+      "main": [
+        [
+          {
+            "node": "Run — Init Constants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run — Init Constants": {
+      "main": [
+        [
+          {
+            "node": "Load — Backfill",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load — Backfill": {
+      "main": [
+        [
+          {
+            "node": "Run — Create Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run — Create Job": {
+      "main": [
+        [
+          {
+            "node": "Run — Has Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run — Has Job": {
+      "main": [
+        [
+          {
+            "node": "Load — Lecture",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load — Lecture": {
+      "main": [
+        [
+          {
+            "node": "Load — No Cards",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load — No Cards": {
+      "main": [
+        [
+          {
+            "node": "Load — Has Konspekt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fin — Fail Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load — Has Konspekt": {
+      "main": [
+        [
+          {
+            "node": "LLM — Build Terms Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fin — Fail Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM — Build Terms Request": {
+      "main": [
+        [
+          {
+            "node": "LLM — Budget OK Terms",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM — Budget OK Terms": {
+      "main": [
+        [
+          {
+            "node": "Shared — DeepSeek Terms",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fin — Fail Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shared — DeepSeek Terms": {
+      "main": [
+        [
+          {
+            "node": "LLM — Parse Terms",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fin — Fail Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM — Parse Terms": {
+      "main": [
+        [
+          {
+            "node": "DB — Log Usage Terms",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB — Log Usage Terms": {
+      "main": [
+        [
+          {
+            "node": "LLM — Terms Ready",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM — Terms Ready": {
+      "main": [
+        [
+          {
+            "node": "LLM — Terms OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM — Terms OK": {
+      "main": [
+        [
+          {
+            "node": "DB — Upsert Terms",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fin — Fail Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB — Upsert Terms": {
+      "main": [
+        [
+          {
+            "node": "DB — Upsert Subtopics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB — Upsert Subtopics": {
+      "main": [
+        [
+          {
+            "node": "Run — Loop Subtopics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run — Loop Subtopics": {
+      "main": [
+        [
+          {
+            "node": "DB — Finish Job",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "DB — Load Spend",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB — Load Spend": {
+      "main": [
+        [
+          {
+            "node": "LLM — Build Questions Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM — Build Questions Request": {
+      "main": [
+        [
+          {
+            "node": "LLM — Budget OK Questions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM — Budget OK Questions": {
+      "main": [
+        [
+          {
+            "node": "LLM — Has Terms",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fin — Fail Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM — Has Terms": {
+      "main": [
+        [
+          {
+            "node": "Shared — DeepSeek Questions",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Run — Loop Subtopics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shared — DeepSeek Questions": {
+      "main": [
+        [
+          {
+            "node": "LLM — Parse Questions",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fin — Fail Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM — Parse Questions": {
+      "main": [
+        [
+          {
+            "node": "DB — Log Usage Questions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB — Log Usage Questions": {
+      "main": [
+        [
+          {
+            "node": "LLM — Decide Questions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM — Decide Questions": {
+      "main": [
+        [
+          {
+            "node": "LLM — Needs Retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM — Needs Retry": {
+      "main": [
+        [
+          {
+            "node": "Shared — DeepSeek Questions Retry",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "DB — Upsert Questions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shared — DeepSeek Questions Retry": {
+      "main": [
+        [
+          {
+            "node": "LLM — Parse Questions Retry",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fin — Fail Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM — Parse Questions Retry": {
+      "main": [
+        [
+          {
+            "node": "DB — Log Usage Questions Retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB — Log Usage Questions Retry": {
+      "main": [
+        [
+          {
+            "node": "LLM — Merge Retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM — Merge Retry": {
+      "main": [
+        [
+          {
+            "node": "DB — Upsert Questions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB — Upsert Questions": {
+      "main": [
+        [
+          {
+            "node": "Run — Loop Subtopics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fin — Fail Context": {
+      "main": [
+        [
+          {
+            "node": "Fin — Fail Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}

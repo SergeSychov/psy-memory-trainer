@@ -25,6 +25,7 @@ tests/fixtures/private/**
 fixtures/lecture39/
 **/transcript.txt
 **/konspekt_v2.md
+!prompts/konspekt_v2.md
 **/transcribe_meta.json
 
 # Local tooling

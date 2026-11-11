@@ -17,7 +17,7 @@ WHISPER_BASE = "http://psy-whisper:8080"
 WF_VER = {
     "psy_01": "psy_01_ingest_cloud_folder_v1",
     "psy_02": "psy_02_extract_audio_v1",
-    "psy_03": "psy_03_transcribe_v1",
+    "psy_03": "psy_03_transcribe_v2",
 }
 
 
@@ -706,11 +706,20 @@ WHERE j.id = (
 RETURNING j.*"""
 
 
-def build_psy_03() -> tuple[str, list, dict]:
+def build_psy_03(psy_04_id: str | None = None) -> tuple[str, list, dict]:
+    """psy_03_transcribe v2: + enqueue konspekt job and (when psy_04_id is known) Fin — Kick psy_04."""
     nodes = []
     conn: dict = {}
     nodes.append(sticky("NOTE — ASR", "## ASR\nClaim transcribe job, glossary → initial_prompt, whisper.", -40, 40, 360))
-    nodes.append(sticky("NOTE — DB", "## DB\nIdempotent lecture_texts + chunks upsert. Keep opus.", 1400, 40, 320))
+    nodes.append(
+        sticky(
+            "NOTE — DB",
+            "## DB\nIdempotent lecture_texts + chunks upsert. Keep opus.\nv2: enqueue `konspekt:<lecture_id>` + kick psy_04 (wait=false).",
+            1400,
+            40,
+            360,
+        )
+    )
 
     n_manual = {"id": nid(), "name": "In — Manual", "type": "n8n-nodes-base.manualTrigger", "typeVersion": 1, "position": [0, 300], "parameters": {}}
     n_exec = {"id": nid(), "name": "In — Execute", "type": "n8n-nodes-base.executeWorkflowTrigger", "typeVersion": 1, "position": [0, 480], "parameters": {}}
@@ -788,7 +797,8 @@ return [{
     $3::text AS transcript,
     $4::text AS whisper_model,
     $5::int AS duration_sec,
-    $6::jsonb AS segments
+    $6::jsonb AS segments,
+    $7::text AS workflow_version
 ), upsert_text AS (
   INSERT INTO psy.lecture_texts (lecture_id, transcript, whisper_model)
   SELECT lecture_id, transcript, whisper_model FROM params
@@ -828,11 +838,20 @@ return [{
   SET status = 'done', finished_at = now(), error = NULL
   WHERE id = (SELECT job_id FROM params)
   RETURNING id
+), enq_konspekt AS (
+  INSERT INTO psy.jobs (lecture_id, step, status, idempotency_key, payload)
+  SELECT p.lecture_id, 'konspekt', 'queued', 'konspekt:' || p.lecture_id::text,
+         jsonb_build_object('workflow_version', p.workflow_version, 'source', 'psy_03')
+  FROM params p
+  WHERE EXISTS (SELECT 1 FROM done_job)
+  ON CONFLICT (idempotency_key) DO NOTHING
+  RETURNING id
 )
 SELECT
   (SELECT id FROM lec) AS lecture_id,
   (SELECT id FROM done_job) AS job_id,
-  (SELECT count(*) FROM upsert_chunks) AS chunk_count""",
+  (SELECT count(*) FROM upsert_chunks) AS chunk_count,
+  (SELECT id FROM enq_konspekt) AS konspekt_job_id""",
         1540,
         220,
         """={{ [
@@ -841,9 +860,22 @@ SELECT
   $json.text,
   $json.model,
   Math.round(Number($json.duration_sec || 0)),
-  JSON.stringify($json.segments || [])
+  JSON.stringify($json.segments || []),
+  $('Run — Init Constants').first().json.constants.workflow_version
 ] }}""",
     )
+    n_kick = {
+        "id": nid(),
+        "name": "Fin — Kick psy_04",
+        "type": "n8n-nodes-base.executeWorkflow",
+        "typeVersion": 1.2,
+        "position": [1760, 220],
+        "parameters": {
+            "workflowId": {"__rl": True, "mode": "id", "value": psy_04_id or ""},
+            "options": {"waitForSubWorkflow": False},
+        },
+        "onError": "continueRegularOutput",
+    }
     n_fail_ctx = code(
         "Fin — Fail Context",
         """const job = $('Run — Create Job').item.json;
@@ -896,6 +928,8 @@ SELECT * FROM j""",
     )
 
     nodes.extend([n_manual, n_exec, n_init, n_claim, n_has, n_gloss, n_prep, n_asr, n_save, n_fail_ctx, n_fail])
+    if psy_04_id:
+        nodes.append(n_kick)
     link(conn, "In — Manual", "Run — Init Constants")
     link(conn, "In — Execute", "Run — Init Constants")
     link(conn, "Run — Init Constants", "Run — Create Job")
@@ -904,6 +938,8 @@ SELECT * FROM j""",
     link(conn, "Load — Glossary", "ASR — Prep Request")
     link(conn, "ASR — Prep Request", "ASR — Transcribe")
     link(conn, "ASR — Transcribe", "DB — Save Transcript", 0)
+    if psy_04_id:
+        link(conn, "DB — Save Transcript", "Fin — Kick psy_04")
     link(conn, "ASR — Transcribe", "Fin — Fail Context", 1)
     link(conn, "Fin — Fail Context", "Fin — Fail Job")
     return "psy_03_transcribe", nodes, conn
@@ -911,7 +947,9 @@ SELECT * FROM j""",
 
 def main() -> None:
     # Create/update in dependency order: 03 first (no kick), then 02, then 01
-    slug3, nodes3, conn3 = build_psy_03()
+    psy_04_id_path = WORKFLOWS / "psy_04_konspekt.id"
+    psy_04_id = psy_04_id_path.read_text(encoding="utf-8").strip() if psy_04_id_path.exists() else None
+    slug3, nodes3, conn3 = build_psy_03(psy_04_id)
     id3 = ensure_workflow(slug3, nodes3, conn3)
     save_local(slug3, id3, slug3, nodes3, conn3)
     print(json.dumps({"created": slug3, "id": id3}, ensure_ascii=False))
