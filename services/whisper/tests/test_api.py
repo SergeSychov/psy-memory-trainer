@@ -11,6 +11,7 @@ from app import (
     begin_job,
     end_job,
     idle_exit_seconds,
+    idle_unload_seconds,
     load_settings,
     probe_audio,
     truncate_prompt,
@@ -83,7 +84,8 @@ def test_defaults_are_turbo_int8():
     assert settings.compute_type == "int8"
     assert settings.cpu_threads == 8
     assert settings.vad_filter is True
-    assert idle_exit_seconds({}) == 900
+    assert idle_exit_seconds({}) == 0
+    assert idle_unload_seconds({}) == 900
     assert load_settings({"WHISPER_MODEL": "large-v3"}).model == "large-v3"
     assert load_settings({"WHISPER_CPU_THREADS": "32"}).cpu_threads == 8
     with pytest.raises(Exception, match="only cpu"):

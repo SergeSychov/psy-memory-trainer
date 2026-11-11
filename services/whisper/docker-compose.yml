@@ -1,6 +1,6 @@
-# Локальный и Dokploy-пример. Контейнер не должен висеть: после простоя
-# процесс сам завершается (WHISPER_IDLE_EXIT_SEC), restart оставляем "no",
-# иначе Docker поднимет его снова и RAM не освободится.
+# Локальный смоук. Прод на сервере — deploy/docker-compose.server.yml.
+# Контейнер живёт постоянно: после простоя выгружается модель
+# (WHISPER_IDLE_UNLOAD_SEC), процесс остаётся.
 # Веса лежат в volume whisper-models и переживают остановку.
 #
 # n8n и этот сервис монтируют один и тот же каталог в /data.
@@ -13,7 +13,7 @@ services:
     build: .
     image: psy-whisper:local
     container_name: psy-whisper
-    restart: "no"
+    restart: unless-stopped
     environment:
       WHISPER_MODEL: ${WHISPER_MODEL:-large-v3-turbo}
       WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-int8}
@@ -23,7 +23,8 @@ services:
       HF_HUB_CACHE: /models
       HF_HUB_DISABLE_TELEMETRY: "1"
       OMP_NUM_THREADS: ${WHISPER_CPU_THREADS:-8}
-      WHISPER_IDLE_EXIT_SEC: ${WHISPER_IDLE_EXIT_SEC:-900}
+      WHISPER_IDLE_EXIT_SEC: ${WHISPER_IDLE_EXIT_SEC:-0}
+      WHISPER_IDLE_UNLOAD_SEC: ${WHISPER_IDLE_UNLOAD_SEC:-900}
       WHISPER_TOKEN: ${WHISPER_TOKEN:-}
     volumes:
       - whisper-models:/models
