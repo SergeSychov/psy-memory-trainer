@@ -1,0 +1,397 @@
+{
+  "name": "psy_01_ingest_cloud_folder",
+  "nodes": [
+    {
+      "id": "70bdb343-7615-4ddc-81dd-170fbb06235f",
+      "name": "NOTE — In",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -200,
+        40
+      ],
+      "parameters": {
+        "content": "## In\nSchedule 15m + Manual + Execute(`course_id`). Inactive.",
+        "width": 280,
+        "height": 140,
+        "color": 5
+      }
+    },
+    {
+      "id": "8dd2f417-ed4b-4234-9e9b-291cc83f7b87",
+      "name": "NOTE — Load/DB",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        600,
+        40
+      ],
+      "parameters": {
+        "content": "## Load / DB\nDrive list-media, skip `_` folders, upsert lecture, enqueue extract.",
+        "width": 360,
+        "height": 140,
+        "color": 5
+      }
+    },
+    {
+      "id": "49502555-f157-4f31-8d4e-1d6861c5540f",
+      "name": "NOTE — Fin",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1800,
+        40
+      ],
+      "parameters": {
+        "content": "## Fin\nKick psy_02 once per new enqueue (wait=false).",
+        "width": 280,
+        "height": 140,
+        "color": 5
+      }
+    },
+    {
+      "id": "0781029e-8e24-47c7-8ffc-9c3952d04efd",
+      "name": "In — Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        240
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/15 * * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "6d495153-1e55-441d-b67a-315e377850d2",
+      "name": "In — Manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        420
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "a69e73b8-b845-4198-a271-68cdebfcc3ac",
+      "name": "In — Execute",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        600
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "course_id"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "69a3d342-dcdb-48c3-a8f0-a003b5226f0f",
+      "name": "Run — Init Constants",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        420
+      ],
+      "parameters": {
+        "jsCode": "return items.map((item, index) => {\n  const constants = {\n    workflow_version: 'psy_01_ingest_cloud_folder_v1',\n    whisper_base: 'http://psy-whisper:8080',\n    drive_list_depth: 1,\n    skip_folder_prefix: '_',\n  };\n  const course_id = item.json.course_id || item.json.query?.course_id || null;\n  return {\n    json: { ...item.json, course_id, constants },\n    pairedItem: index,\n  };\n});"
+      }
+    },
+    {
+      "id": "55accf3b-3ee6-4a99-83d8-75c9b48b23f1",
+      "name": "Load — Courses",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        440,
+        420
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, user_id, title, drive_folder_id\nFROM psy.courses\nWHERE drive_folder_id IS NOT NULL\n  AND ($1::uuid IS NULL OR id = $1::uuid)",
+        "options": {
+          "queryReplacement": "={{ [ $('Run — Init Constants').first().json.course_id || null ] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "fVodKFRegu3319i0",
+          "name": "psy Supabase (psy_n8n)"
+        }
+      }
+    },
+    {
+      "id": "e942439f-2451-4a30-9c0f-76b98c37c2b4",
+      "name": "Load — Drive Media",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        660,
+        420
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Run — Init Constants').first().json.constants.whisper_base || 'http://psy-whisper:8080' }}/drive/list-media",
+        "authentication": "predefinedCredentialType",
+        "sendBody": true,
+        "options": {
+          "timeout": 120000
+        },
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ folder_id: $json.drive_folder_id, depth: ($('Run — Init Constants').first().json.constants.drive_list_depth || 1) }) }}",
+        "nodeCredentialType": "googleDriveOAuth2Api"
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "S7mhg7CBYGpInlHx",
+          "name": "Google Drive account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "679b3536-cbf7-4448-842e-9a1a8920ee84",
+      "name": "Load — Flatten Media",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        420
+      ],
+      "parameters": {
+        "jsCode": "const constants = $('Run — Init Constants').first().json.constants || {\n  workflow_version: 'psy_01_ingest_cloud_folder_v1',\n  skip_folder_prefix: '_',\n};\nconst course = $('Load — Courses').item.json;\nconst files = items[0].json.files || [];\nconst prefix = constants.skip_folder_prefix || '_';\nconst out = [];\nfor (const f of files) {\n  const path = f.folder_path || [];\n  if (path.some((p) => String(p).startsWith(prefix))) continue;\n  const name = f.name || '';\n  const ext = (name.includes('.') ? name.split('.').pop() : 'bin').toLowerCase();\n  out.push({\n    json: {\n      constants,\n      course_id: course.id,\n      file_id: f.id,\n      title: name,\n      media_kind: f.media_kind,\n      duration_sec: f.duration_ms != null ? Math.round(Number(f.duration_ms) / 1000) : null,\n      ext,\n      size_bytes: f.size_bytes,\n      source_meta_drive: {\n        name: f.name,\n        mime_type: f.mime_type,\n        size_bytes: f.size_bytes,\n        md5: f.md5,\n        folder_path: path,\n        modified_time: f.modified_time,\n      },\n    },\n    pairedItem: 0,\n  });\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "5cd169f5-ec56-4923-bf61-d49819e4169c",
+      "name": "DB — Upsert Lecture",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1100,
+        420
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO psy.lectures (\n  course_id, external_file_id, title, media_kind, duration_sec, status, source_meta\n) VALUES (\n  $1::uuid, $2, $3, $4, $5, 'queued',\n  jsonb_build_object('drive', $6::jsonb)\n)\nON CONFLICT (course_id, external_file_id) DO NOTHING\nRETURNING id, course_id, external_file_id, status",
+        "options": {
+          "queryReplacement": "={{ [\n  $json.course_id,\n  $json.file_id,\n  $json.title,\n  $json.media_kind,\n  $json.duration_sec,\n  JSON.stringify($json.source_meta_drive || {})\n] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "fVodKFRegu3319i0",
+          "name": "psy Supabase (psy_n8n)"
+        }
+      }
+    },
+    {
+      "id": "48358f40-a988-4976-8466-0279304203c4",
+      "name": "DB — Has New Lecture",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1320,
+        420
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "ebad8441-7c26-431a-9e65-804fdb13ecbd",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "c37dad2b-6fe4-4d46-9499-02e338022c39",
+      "name": "DB — Enqueue Extract",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1540,
+        300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO psy.jobs (\n  lecture_id, step, status, idempotency_key, payload\n) VALUES (\n  $1::uuid, 'extract_audio', 'queued', 'extract_audio:' || $1::text,\n  jsonb_build_object(\n    'file_id', $2,\n    'ext', $3,\n    'size_bytes', $4,\n    'workflow_version', $5\n  )\n)\nON CONFLICT (idempotency_key) DO NOTHING\nRETURNING id, lecture_id, step, status",
+        "options": {
+          "queryReplacement": "={{ [\n  $json.id,\n  $('Load — Flatten Media').item.json.file_id,\n  $('Load — Flatten Media').item.json.ext,\n  $('Load — Flatten Media').item.json.size_bytes,\n  $('Run — Init Constants').first().json.constants.workflow_version\n] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "fVodKFRegu3319i0",
+          "name": "psy Supabase (psy_n8n)"
+        }
+      }
+    },
+    {
+      "id": "c08eaa21-0f32-418f-a88a-0c88afa914dc",
+      "name": "Fin — Kick psy_02",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1760,
+        300
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "fGv2q7QmHtB3PzuL"
+        },
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "In — Schedule": {
+      "main": [
+        [
+          {
+            "node": "Run — Init Constants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "In — Manual": {
+      "main": [
+        [
+          {
+            "node": "Run — Init Constants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "In — Execute": {
+      "main": [
+        [
+          {
+            "node": "Run — Init Constants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run — Init Constants": {
+      "main": [
+        [
+          {
+            "node": "Load — Courses",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load — Courses": {
+      "main": [
+        [
+          {
+            "node": "Load — Drive Media",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load — Drive Media": {
+      "main": [
+        [
+          {
+            "node": "Load — Flatten Media",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load — Flatten Media": {
+      "main": [
+        [
+          {
+            "node": "DB — Upsert Lecture",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB — Upsert Lecture": {
+      "main": [
+        [
+          {
+            "node": "DB — Has New Lecture",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB — Has New Lecture": {
+      "main": [
+        [
+          {
+            "node": "DB — Enqueue Extract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB — Enqueue Extract": {
+      "main": [
+        [
+          {
+            "node": "Fin — Kick psy_02",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}
