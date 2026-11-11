@@ -34,3 +34,6 @@ __pycache__/
 *.pyc
 .pytest_cache/
 node_modules/
+
+# Local Cursor MCP config
+.cursor/mcp.json
