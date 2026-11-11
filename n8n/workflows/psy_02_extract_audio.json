@@ -1,0 +1,568 @@
+{
+  "name": "psy_02_extract_audio",
+  "nodes": [
+    {
+      "id": "0b9f4174-ca5c-483c-9476-969c14bba637",
+      "name": "NOTE — Run",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        40
+      ],
+      "parameters": {
+        "content": "## Run\nClaim one extract_audio job (SKIP LOCKED).",
+        "width": 280,
+        "height": 140,
+        "color": 5
+      }
+    },
+    {
+      "id": "e17af2ad-5579-4268-953f-51bde80a9caf",
+      "name": "NOTE — Audio",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        700,
+        40
+      ],
+      "parameters": {
+        "content": "## Audio\nHealth → Drive fetch → extract. 409 → requeue.",
+        "width": 320,
+        "height": 140,
+        "color": 5
+      }
+    },
+    {
+      "id": "752ce909-5578-43d8-a86d-894fee3edb70",
+      "name": "NOTE — Fin",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1700,
+        40
+      ],
+      "parameters": {
+        "content": "## Fin\nAudio ready + enqueue transcribe + kick psy_03. Fail path cleans inbox.",
+        "width": 340,
+        "height": 140,
+        "color": 5
+      }
+    },
+    {
+      "id": "fac2ca08-9def-476c-9036-0bf5bb98f9b9",
+      "name": "In — Manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "3c3eb70f-e9a0-4557-ab58-fd5a437b378a",
+      "name": "In — Execute",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        480
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "d2a37192-5d47-48dc-b0f2-4aecbda8bb3e",
+      "name": "Run — Init Constants",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        360
+      ],
+      "parameters": {
+        "jsCode": "return items.map((item, index) => {\n  const constants = {\n    workflow_version: 'psy_02_extract_audio_v1',\n    whisper_base: 'http://psy-whisper:8080',\n    max_attempts: 3,\n    stale_running_hours: 4,\n  };\n  return { json: { ...item.json, constants }, pairedItem: index };\n});"
+      }
+    },
+    {
+      "id": "5fcfeea4-ccf3-415e-96da-b6a15c2776cb",
+      "name": "Run — Create Job",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        440,
+        360
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE psy.jobs j\nSET status = 'running',\n    attempts = attempts + 1,\n    started_at = now(),\n    error = NULL,\n    payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('workflow_version', $1, 'claimed_at', now())\nWHERE j.id = (\n  SELECT id FROM psy.jobs\n  WHERE step = 'extract_audio'\n    AND attempts < 3\n    AND (\n      status = 'queued'\n      OR (status = 'running' AND started_at < now() - interval '4 hours')\n    )\n  ORDER BY created_at\n  LIMIT 1\n  FOR UPDATE SKIP LOCKED\n)\nRETURNING j.*",
+        "options": {
+          "queryReplacement": "={{ [ $('Run — Init Constants').first().json.constants.workflow_version ] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "fVodKFRegu3319i0",
+          "name": "psy Supabase (psy_n8n)"
+        }
+      }
+    },
+    {
+      "id": "709a2345-ba8c-423b-a19c-ed752caa7d95",
+      "name": "Run — Has Job",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        360
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "1aa5edff-d122-4164-b3ed-7a5a0ffba3e8",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "3dde65cb-c0e5-4a91-8c48-63322bbc5863",
+      "name": "Audio — Check Health",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        880,
+        300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Run — Init Constants').first().json.constants.whisper_base || 'http://psy-whisper:8080' }}/health",
+        "authentication": "none",
+        "sendBody": false,
+        "options": {
+          "timeout": 30000
+        }
+      }
+    },
+    {
+      "id": "4ea382a4-c4ff-4fd4-94a7-2f9a895028cb",
+      "name": "Audio — Is Busy",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "e0c5f5f8-1a3f-4cd2-958e-a7a9db108a10",
+              "leftValue": "={{ String($json.busy) }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "5d791e4b-c2d6-4cf5-8674-14b8fe7c155c",
+      "name": "Audio — Requeue Busy",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1320,
+        160
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE psy.jobs\nSET status = 'queued',\n    attempts = GREATEST(attempts - 1, 0),\n    error = 'whisper busy (409)',\n    started_at = NULL\nWHERE id = $1::uuid\nRETURNING id, status, attempts",
+        "options": {
+          "queryReplacement": "={{ [ $('Run — Create Job').item.json.id ] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "fVodKFRegu3319i0",
+          "name": "psy Supabase (psy_n8n)"
+        }
+      }
+    },
+    {
+      "id": "d9119a80-a408-4947-9ebc-671fdc6ed30e",
+      "name": "Audio — Prep Paths",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        360
+      ],
+      "parameters": {
+        "jsCode": "const job = $('Run — Create Job').item.json;\nconst constants = $('Run — Init Constants').first().json.constants;\nconst payload = typeof job.payload === 'string' ? JSON.parse(job.payload) : (job.payload || {});\nconst ext = payload.ext || 'bin';\nconst lecture_id = job.lecture_id;\nconst inbox_path = `inbox/${lecture_id}.${ext}`;\nconst audio_path = `audio/${lecture_id}.16k.opus`;\nreturn [{\n  json: {\n    ...job,\n    constants,\n    payload,\n    file_id: payload.file_id,\n    ext,\n    lecture_id,\n    inbox_path,\n    audio_path,\n  },\n  pairedItem: 0,\n}];"
+      }
+    },
+    {
+      "id": "e715e262-e3b3-4d36-a7e2-5c852bcae35e",
+      "name": "Audio — Fetch From Drive",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1540,
+        360
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.constants.whisper_base || 'http://psy-whisper:8080' }}/drive/fetch",
+        "authentication": "predefinedCredentialType",
+        "sendBody": true,
+        "options": {
+          "timeout": 3600000
+        },
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ file_id: $json.file_id, output_path: $json.inbox_path }) }}",
+        "nodeCredentialType": "googleDriveOAuth2Api"
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "S7mhg7CBYGpInlHx",
+          "name": "Google Drive account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "7d765ef5-2bd6-4e86-8c42-940e779ca382",
+      "name": "Audio — Extract",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1760,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Audio — Prep Paths').item.json.constants.whisper_base || 'http://psy-whisper:8080' }}/extract-audio",
+        "authentication": "genericCredentialType",
+        "sendBody": true,
+        "options": {
+          "timeout": 3600000
+        },
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ input_path: $('Audio — Prep Paths').item.json.inbox_path, output_path: $('Audio — Prep Paths').item.json.audio_path, delete_input: true }) }}",
+        "genericAuthType": "httpBearerAuth"
+      },
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "WeUa8vWm5ugn7AeW",
+          "name": "psy Whisper token"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "c8a4422a-1d57-4fa0-8418-5f959e7e05ce",
+      "name": "DB — Audio Ready",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1980,
+        300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH lec AS (\n  UPDATE psy.lectures\n  SET status = 'audio_ready',\n      duration_sec = COALESCE($2::int, duration_sec),\n      source_meta = COALESCE(source_meta, '{}'::jsonb) || jsonb_build_object(\n        'audio', jsonb_build_object('path', $3, 'duration_sec', $2)\n      ),\n      error = NULL\n  WHERE id = $1::uuid\n  RETURNING id\n), done_job AS (\n  UPDATE psy.jobs\n  SET status = 'done', finished_at = now(), error = NULL\n  WHERE id = $4::uuid\n  RETURNING id\n), enq AS (\n  INSERT INTO psy.jobs (lecture_id, step, status, idempotency_key, payload)\n  VALUES (\n    $1::uuid, 'transcribe', 'queued', 'transcribe:' || $1::text,\n    jsonb_build_object('audio_path', $3, 'workflow_version', $5)\n  )\n  ON CONFLICT (idempotency_key) DO NOTHING\n  RETURNING id\n)\nSELECT (SELECT id FROM lec) AS lecture_id,\n       (SELECT id FROM done_job) AS job_id,\n       (SELECT id FROM enq) AS transcribe_job_id",
+        "options": {
+          "queryReplacement": "={{ [\n  $('Audio — Prep Paths').item.json.lecture_id,\n  Math.round(Number($json.duration_sec || 0)),\n  $('Audio — Prep Paths').item.json.audio_path,\n  $('Audio — Prep Paths').item.json.id,\n  $('Run — Init Constants').first().json.constants.workflow_version\n] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "fVodKFRegu3319i0",
+          "name": "psy Supabase (psy_n8n)"
+        }
+      }
+    },
+    {
+      "id": "2ea340b1-fd1b-46a4-b55d-a680378efe65",
+      "name": "Fin — Kick psy_03",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2200,
+        300
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "tRGq7gzjUbO52oq1"
+        },
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "89d82c97-f0b7-4b4a-99f2-4a39dd1360bd",
+      "name": "Fin — Fail Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        560
+      ],
+      "parameters": {
+        "jsCode": "const job = $('Run — Create Job').item.json;\nconst prep = (() => { try { return $('Audio — Prep Paths').item.json; } catch (e) { return {}; } })();\nconst errItem = items[0].json || {};\nconst statusCode = errItem.statusCode || errItem.httpCode || errItem.error?.status || null;\nconst message = errItem.message || errItem.error?.message || errItem.error || JSON.stringify(errItem).slice(0, 500);\nreturn [{\n  json: {\n    job_id: job.id,\n    lecture_id: job.lecture_id || prep.lecture_id,\n    attempts: job.attempts,\n    inbox_path: prep.inbox_path || null,\n    status_code: statusCode,\n    error_message: String(message),\n    constants: $('Run — Init Constants').first().json.constants,\n  },\n  pairedItem: 0,\n}];"
+      }
+    },
+    {
+      "id": "7e405a91-f845-4669-b405-2f536c3e0bb9",
+      "name": "Fin — Fail Job",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1980,
+        560
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH j AS (\n  UPDATE psy.jobs\n  SET status = CASE\n        WHEN $2::int = 409 THEN 'queued'\n        WHEN attempts >= 3 THEN 'failed'\n        ELSE 'queued'\n      END,\n      attempts = CASE WHEN $2::int = 409 THEN GREATEST(attempts - 1, 0) ELSE attempts END,\n      error = $3,\n      finished_at = CASE WHEN $2::int <> 409 AND attempts >= 3 THEN now() ELSE NULL END,\n      started_at = CASE WHEN $2::int = 409 OR attempts < 3 THEN NULL ELSE started_at END\n  WHERE id = $1::uuid\n  RETURNING id, status, attempts, lecture_id\n), lec AS (\n  UPDATE psy.lectures\n  SET status = 'failed', error = $3\n  WHERE id = (SELECT lecture_id FROM j)\n    AND (SELECT status FROM j) = 'failed'\n  RETURNING id\n)\nSELECT * FROM j",
+        "options": {
+          "queryReplacement": "={{ [\n  $json.job_id,\n  Number($json.status_code || 0),\n  $json.error_message\n] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "fVodKFRegu3319i0",
+          "name": "psy Supabase (psy_n8n)"
+        }
+      }
+    },
+    {
+      "id": "4f26285d-6a7c-4d83-9e81-0e74e00696ee",
+      "name": "Fin — Cleanup Inbox",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2200,
+        560
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Fin — Fail Context').item.json.constants.whisper_base || 'http://psy-whisper:8080' }}/files/delete",
+        "authentication": "genericCredentialType",
+        "sendBody": true,
+        "options": {
+          "timeout": 60000
+        },
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ path: $('Fin — Fail Context').item.json.inbox_path }) }}",
+        "genericAuthType": "httpBearerAuth"
+      },
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "WeUa8vWm5ugn7AeW",
+          "name": "psy Whisper token"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "In — Manual": {
+      "main": [
+        [
+          {
+            "node": "Run — Init Constants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "In — Execute": {
+      "main": [
+        [
+          {
+            "node": "Run — Init Constants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run — Init Constants": {
+      "main": [
+        [
+          {
+            "node": "Run — Create Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run — Create Job": {
+      "main": [
+        [
+          {
+            "node": "Run — Has Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run — Has Job": {
+      "main": [
+        [
+          {
+            "node": "Audio — Check Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audio — Check Health": {
+      "main": [
+        [
+          {
+            "node": "Audio — Is Busy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audio — Is Busy": {
+      "main": [
+        [
+          {
+            "node": "Audio — Requeue Busy",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Audio — Prep Paths",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audio — Prep Paths": {
+      "main": [
+        [
+          {
+            "node": "Audio — Fetch From Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audio — Fetch From Drive": {
+      "main": [
+        [
+          {
+            "node": "Audio — Extract",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fin — Fail Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audio — Extract": {
+      "main": [
+        [
+          {
+            "node": "DB — Audio Ready",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fin — Fail Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB — Audio Ready": {
+      "main": [
+        [
+          {
+            "node": "Fin — Kick psy_03",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fin — Fail Context": {
+      "main": [
+        [
+          {
+            "node": "Fin — Fail Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fin — Fail Job": {
+      "main": [
+        [
+          {
+            "node": "Fin — Cleanup Inbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}

@@ -1,31 +1,14 @@
 # workflows
 
-JSON-экспорт workflow n8n и контракты узлов. Сейчас каталог пустой: живой инстанс ещё не аудирован, workflow в n8n из этого репозитория не создаются.
+Контракты и указатели на JSON-экспорт n8n. Канонические файлы: [`n8n/workflows/`](../n8n/workflows/) (+ `.id`). Деплой: `n8n/scripts/pull_workflow.py` / `push_workflow.py` (env из `~/.config/psy-memory-trainer/n8n.env`).
 
-Перед первым экспортом агент сверяется с правилами и контрактами уже работающего n8n и дожидается approve владельца (`AGENTS.md`).
+| Workflow | Статус | Назначение |
+|---|---|---|
+| `psy_01_ingest_cloud_folder` | в n8n, **inactive** | Drive list-media → lecture + job extract |
+| `psy_02_extract_audio` | в n8n, **inactive** | claim → fetch → extract → audio_ready |
+| `psy_03_transcribe` | в n8n, **inactive** | claim → glossary prompt → whisper → chunks |
+| `psy_04`…`psy_09` | позже | конспект, MCQ, FSRS, Telegram |
 
-Имена ниже — предложение из [плана](../docs/plan.md). Если на инстансе уже занято другое имя, план обновляется, а не затирается чужой workflow.
+Подробные контракты (триггеры, credentials по имени, идемпотентность, таблицы, успех/ошибка) — в [n8n/workflows/README.md](../n8n/workflows/README.md).
 
-| Файл (позже) | Назначение |
-|---|---|
-| `psy_01_ingest_cloud_folder.json` | Новый файл в облачной папке → job |
-| `psy_02_extract_audio.json` | ffmpeg → mono 16 kHz |
-| `psy_03_transcribe.json` | Вызов Whisper с `initial_prompt` из глоссария |
-| `psy_04_konspekt.json` | Конспект по `prompts/konspekt_v1.md` |
-| `psy_05_terms_and_questions.json` | Термины и MCQ → Postgres |
-| `psy_06_seed_fsrs_cards.json` | Карточки FSRS |
-| `psy_07_morning_due.json` | Утренний cron due-карточек в Telegram |
-| `psy_08_quiz_callback.json` | Ответ A/B/C/D; ошибка → объяснение и новый вопрос на термин |
-| `psy_09_evening_reminder.json` | Вечернее короткое напоминание |
-
-## Контракт узла
-
-Рядом с каждым JSON, когда он появится, — короткий раздел в этом README:
-
-- триггер;
-- имена credentials n8n (без значений);
-- ключ идемпотентности;
-- таблицы, которые workflow читает и пишет;
-- что считается успехом и что происходит при ошибке.
-
-Из экспорта перед коммитом вычищаются credentials и любые куски лекций, попавшие в пины или примеры.
+Перед коммитом JSON: без `pinData` / `staticData` / значений секретов; ссылки `{id,name}` на credentials допустимы.

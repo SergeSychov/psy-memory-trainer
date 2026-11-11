@@ -1,0 +1,363 @@
+{
+  "name": "psy_03_transcribe",
+  "nodes": [
+    {
+      "id": "ca3d4b78-2562-4aed-9ca8-4da62de4d1af",
+      "name": "NOTE — ASR",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        40
+      ],
+      "parameters": {
+        "content": "## ASR\nClaim transcribe job, glossary → initial_prompt, whisper.",
+        "width": 360,
+        "height": 140,
+        "color": 5
+      }
+    },
+    {
+      "id": "f17a1a88-767c-4713-b02e-df0a14f1e919",
+      "name": "NOTE — DB",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1400,
+        40
+      ],
+      "parameters": {
+        "content": "## DB\nIdempotent lecture_texts + chunks upsert. Keep opus.",
+        "width": 320,
+        "height": 140,
+        "color": 5
+      }
+    },
+    {
+      "id": "20781b2b-6f70-439d-b7bc-6051c541d68b",
+      "name": "In — Manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "b49b4dbc-05fb-4136-a7b5-6abaa0c8f5cf",
+      "name": "In — Execute",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        480
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "c79469ca-bb11-404a-b42f-67ebfd20f002",
+      "name": "Run — Init Constants",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        360
+      ],
+      "parameters": {
+        "jsCode": "return items.map((item, index) => {\n  const constants = {\n    workflow_version: 'psy_03_transcribe_v1',\n    whisper_base: 'http://psy-whisper:8080',\n    language: 'ru',\n  };\n  return { json: { ...item.json, constants }, pairedItem: index };\n});"
+      }
+    },
+    {
+      "id": "ab85270b-bfd4-4fcc-8d19-a695a5b5d0d3",
+      "name": "Run — Create Job",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        440,
+        360
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE psy.jobs j\nSET status = 'running',\n    attempts = attempts + 1,\n    started_at = now(),\n    error = NULL,\n    payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('workflow_version', $1, 'claimed_at', now())\nWHERE j.id = (\n  SELECT id FROM psy.jobs\n  WHERE step = 'transcribe'\n    AND attempts < 3\n    AND (\n      status = 'queued'\n      OR (status = 'running' AND started_at < now() - interval '4 hours')\n    )\n  ORDER BY created_at\n  LIMIT 1\n  FOR UPDATE SKIP LOCKED\n)\nRETURNING j.*",
+        "options": {
+          "queryReplacement": "={{ [ $('Run — Init Constants').first().json.constants.workflow_version ] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "fVodKFRegu3319i0",
+          "name": "psy Supabase (psy_n8n)"
+        }
+      }
+    },
+    {
+      "id": "f87f7a3d-4c83-40f2-9c95-5a0ef2b56ff3",
+      "name": "Run — Has Job",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        360
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "88fa2562-aad9-4337-a4ad-4e72afb0337e",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "2e1fc1a6-2f8e-4e46-93cd-0b6ede4b83e1",
+      "name": "Load — Glossary",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        880,
+        300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  j.id AS job_id,\n  j.lecture_id,\n  j.attempts,\n  j.payload,\n  l.course_id,\n  COALESCE(j.payload->>'audio_path', 'audio/' || l.id::text || '.16k.opus') AS audio_path,\n  (\n    SELECT string_agg(g.canonical, ', ' ORDER BY g.canonical)\n    FROM psy.glossary_terms g\n    WHERE g.course_id = l.course_id\n  ) AS initial_prompt\nFROM psy.jobs j\nJOIN psy.lectures l ON l.id = j.lecture_id\nWHERE j.id = $1::uuid",
+        "options": {
+          "queryReplacement": "={{ [ $('Run — Create Job').item.json.id ] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "fVodKFRegu3319i0",
+          "name": "psy Supabase (psy_n8n)"
+        }
+      }
+    },
+    {
+      "id": "8cdb5f4c-4c0a-4a04-b5b2-89a3db800490",
+      "name": "ASR — Prep Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const row = items[0].json;\nconst constants = $('Run — Init Constants').first().json.constants;\nconst prompt = row.initial_prompt;\nconst body = {\n  audio_path: row.audio_path,\n  language: constants.language || 'ru',\n};\nif (prompt) body.initial_prompt = prompt;\nreturn [{\n  json: {\n    ...row,\n    constants,\n    request_body: body,\n    has_initial_prompt: Boolean(prompt),\n  },\n  pairedItem: 0,\n}];"
+      }
+    },
+    {
+      "id": "baff1fce-0950-4f51-839d-ee5a5a519efb",
+      "name": "ASR — Transcribe",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1320,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.constants.whisper_base || 'http://psy-whisper:8080' }}/transcribe",
+        "authentication": "genericCredentialType",
+        "sendBody": true,
+        "options": {
+          "timeout": 10800000
+        },
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request_body) }}",
+        "genericAuthType": "httpBearerAuth"
+      },
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "WeUa8vWm5ugn7AeW",
+          "name": "psy Whisper token"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "2e9ebd0a-1923-4d94-b0df-0276daba8a73",
+      "name": "DB — Save Transcript",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1540,
+        220
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH params AS (\n  SELECT\n    $1::uuid AS lecture_id,\n    $2::uuid AS job_id,\n    $3::text AS transcript,\n    $4::text AS whisper_model,\n    $5::int AS duration_sec,\n    $6::jsonb AS segments\n), upsert_text AS (\n  INSERT INTO psy.lecture_texts (lecture_id, transcript, whisper_model)\n  SELECT lecture_id, transcript, whisper_model FROM params\n  ON CONFLICT (lecture_id) DO UPDATE\n    SET transcript = EXCLUDED.transcript,\n        whisper_model = EXCLUDED.whisper_model\n  RETURNING lecture_id\n), upsert_chunks AS (\n  INSERT INTO psy.chunks (lecture_id, ordinal, start_ms, end_ms, text)\n  SELECT p.lecture_id, s.ordinal, s.start_ms, s.end_ms, s.text\n  FROM params p\n  CROSS JOIN LATERAL jsonb_to_recordset(p.segments) AS s(\n    ordinal int, start_ms int, end_ms int, text text\n  )\n  ON CONFLICT (lecture_id, ordinal) DO UPDATE\n    SET start_ms = EXCLUDED.start_ms,\n        end_ms = EXCLUDED.end_ms,\n        text = EXCLUDED.text\n  RETURNING ordinal\n), max_ord AS (\n  SELECT COALESCE(MAX(ordinal), 0) AS m FROM upsert_chunks\n), del AS (\n  DELETE FROM psy.chunks c\n  USING params p, max_ord m\n  WHERE c.lecture_id = p.lecture_id AND c.ordinal > m.m\n  RETURNING c.ordinal\n), lec AS (\n  UPDATE psy.lectures l\n  SET status = 'transcribed',\n      duration_sec = COALESCE((SELECT duration_sec FROM params), l.duration_sec),\n      error = NULL\n  FROM params p\n  WHERE l.id = p.lecture_id\n  RETURNING l.id\n), done_job AS (\n  UPDATE psy.jobs\n  SET status = 'done', finished_at = now(), error = NULL\n  WHERE id = (SELECT job_id FROM params)\n  RETURNING id\n)\nSELECT\n  (SELECT id FROM lec) AS lecture_id,\n  (SELECT id FROM done_job) AS job_id,\n  (SELECT count(*) FROM upsert_chunks) AS chunk_count",
+        "options": {
+          "queryReplacement": "={{ [\n  $('ASR — Prep Request').item.json.lecture_id,\n  $('ASR — Prep Request').item.json.job_id,\n  $json.text,\n  $json.model,\n  Math.round(Number($json.duration_sec || 0)),\n  JSON.stringify($json.segments || [])\n] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "fVodKFRegu3319i0",
+          "name": "psy Supabase (psy_n8n)"
+        }
+      }
+    },
+    {
+      "id": "edfd76de-5a42-49ff-8e86-749b4a3032bc",
+      "name": "Fin — Fail Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        480
+      ],
+      "parameters": {
+        "jsCode": "const job = $('Run — Create Job').item.json;\nconst errItem = items[0].json || {};\nconst statusCode = errItem.statusCode || errItem.httpCode || errItem.error?.status || null;\nconst message = errItem.message || errItem.error?.message || errItem.error || JSON.stringify(errItem).slice(0, 500);\nreturn [{\n  json: {\n    job_id: job.id,\n    lecture_id: job.lecture_id,\n    attempts: job.attempts,\n    status_code: statusCode,\n    error_message: String(message),\n  },\n  pairedItem: 0,\n}];"
+      }
+    },
+    {
+      "id": "a9cb2b4a-2740-4da6-825d-b836a4c64a0c",
+      "name": "Fin — Fail Job",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1760,
+        480
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH j AS (\n  UPDATE psy.jobs\n  SET status = CASE\n        WHEN $2::int = 409 THEN 'queued'\n        WHEN attempts >= 3 THEN 'failed'\n        ELSE 'queued'\n      END,\n      attempts = CASE WHEN $2::int = 409 THEN GREATEST(attempts - 1, 0) ELSE attempts END,\n      error = $3,\n      finished_at = CASE WHEN $2::int <> 409 AND attempts >= 3 THEN now() ELSE NULL END,\n      started_at = CASE WHEN $2::int = 409 OR attempts < 3 THEN NULL ELSE started_at END\n  WHERE id = $1::uuid\n  RETURNING id, status, attempts, lecture_id\n), lec AS (\n  UPDATE psy.lectures\n  SET status = 'failed', error = $3\n  WHERE id = (SELECT lecture_id FROM j)\n    AND (SELECT status FROM j) = 'failed'\n  RETURNING id\n)\nSELECT * FROM j",
+        "options": {
+          "queryReplacement": "={{ [\n  $json.job_id,\n  Number($json.status_code || 0),\n  $json.error_message\n] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "fVodKFRegu3319i0",
+          "name": "psy Supabase (psy_n8n)"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "In — Manual": {
+      "main": [
+        [
+          {
+            "node": "Run — Init Constants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "In — Execute": {
+      "main": [
+        [
+          {
+            "node": "Run — Init Constants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run — Init Constants": {
+      "main": [
+        [
+          {
+            "node": "Run — Create Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run — Create Job": {
+      "main": [
+        [
+          {
+            "node": "Run — Has Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run — Has Job": {
+      "main": [
+        [
+          {
+            "node": "Load — Glossary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load — Glossary": {
+      "main": [
+        [
+          {
+            "node": "ASR — Prep Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ASR — Prep Request": {
+      "main": [
+        [
+          {
+            "node": "ASR — Transcribe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ASR — Transcribe": {
+      "main": [
+        [
+          {
+            "node": "DB — Save Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fin — Fail Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fin — Fail Context": {
+      "main": [
+        [
+          {
+            "node": "Fin — Fail Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}
