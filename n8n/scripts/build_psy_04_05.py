@@ -37,7 +37,7 @@ DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
 
 WF_VER = {
     "psy_04": "psy_04_konspekt_v1",
-    "psy_05": "psy_05_terms_questions_v4",
+    "psy_05": "psy_05_terms_questions_v5",
 }
 
 # psy_03 lives in n8n already; id only used as sanity check / fallback when .id is missing.
@@ -1667,6 +1667,11 @@ FAIL_EXTRA_05 = r"""if (e.budget_exceeded === true) {
   permanent = true;
   keepLecture = true;
   message = 'empty_konspekt: у лекции нет конспекта, LLM не вызывался';
+} else if (e.hard_parse_error === true || e.proceed === false) {
+  // Temporary terms-extract failure: retry (not attempts=3), keep lecture status.
+  permanent = false;
+  keepLecture = true;
+  message = e.error_message || e.gate_reason || 'terms_extract_failed';
 }"""
 
 
@@ -1680,7 +1685,7 @@ def build_psy_05() -> tuple[str, list, dict]:
 
     nodes.append(sticky("NOTE — In", "## In\nManual + Execute (passthrough). Lower-only overrides: `max_cost_usd_per_lecture`, `monthly_budget_usd`. Inactive.", -40, 40, 360, 140))
     nodes.append(sticky("NOTE — Run/Load", "## Run / Load\nBackfill `terms` jobs for `konspekt_ready` → claim `terms`. Refuse when cards already exist for the lecture (no LLM).", 380, 40, 460, 140))
-    nodes.append(sticky("NOTE — LLM", "## LLM\n`extract_terms_v2` → Terms Ready gate (course fallback) → merge thin → upsert → `gen_questions_v3`; empty lecture terms no longer Fail Context.", 1000, 40, 560, 180))
+    nodes.append(sticky("NOTE — LLM", "## LLM\n`extract_terms_v2` → Terms Ready gate: soft empty extract → course fallback; hard parse → Fail Context (retry). Then merge / MCQ.", 1000, 40, 560, 180))
     nodes.append(sticky("NOTE — DB/Fin", "## DB / Fin\nUpsert questions by (subtopic_id, ordinal_in_subtopic) WHERE kind='life_mcq'. Job done + lecture `questions_ready`; counters incl. `short_questions` in jobs.payload. empty_konspekt keeps lecture status.", 3100, 40, 480, 160))
 
     n_manual = manual_trigger(0, 300)
@@ -1755,7 +1760,9 @@ return [{
     terms: gate.terms,
     lecture_terms_empty: gate.lecture_terms_empty,
     course_fallback: gate.course_fallback,
+    hard_parse_error: gate.hard_parse_error,
     gate_reason: gate.reason,
+    error_message: gate.proceed ? parsed.error_message : (gate.reason || parsed.error_message),
   },
   pairedItem: 0,
 }];""",
@@ -1764,8 +1771,7 @@ return [{
         2860,
         140,
     )
-    # proceed is always true after gate (course fallback / synthetic subtopic);
-    # keep IF so hard surprises still have a Fail path without blocking course fallback.
+    # proceed=false on hard parse → Fin — Fail Context (retryable, keep_lecture).
     n_terms_ok = iff("Run — Terms Proceed", "={{ String($json.proceed) }}", "true", 3080, 140, "equals")
     n_merge_thin = code(
         "LLM — Merge Thin Subtopics",

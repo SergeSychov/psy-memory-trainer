@@ -125,24 +125,25 @@ test('transcript miss window centers by subtopic position, not document middle',
   assert.notEqual(first.text, last.text);
 });
 
-test('finalizeTermsExtractGate proceeds when lecture terms empty but course has definitions', () => {
+test('finalizeTermsExtractGate: soft empty terms + course → proceed with course_fallback', () => {
   const gate = finalizeTermsExtractGate({
-    parseOk: false,
+    parseOk: true,
     errorMessage: 'terms: empty_terms',
-    subtopics: [{ ordinal: 1, title: 'Окно' }],
+    subtopics: [{ ordinal: 1, title: 'Окно' }, { ordinal: 2, title: 'Якорь' }],
     terms: [],
     courseTerms: [{ canonical: 'курс-термин', definition: 'из курса' }],
     lectureTitle: 'Лекция X',
   });
   assert.equal(gate.proceed, true);
   assert.equal(gate.course_fallback, true);
-  assert.equal(gate.subtopics.length, 1);
+  assert.equal(gate.hard_parse_error, false);
+  assert.equal(gate.subtopics.length, 2);
   assert.equal(gate.reason, 'course_terms_fallback');
 });
 
-test('finalizeTermsExtractGate does not Fail-Context when no terms anywhere', () => {
+test('finalizeTermsExtractGate: soft empty everywhere → synthetic subtopic, no_terms_available', () => {
   const gate = finalizeTermsExtractGate({
-    parseOk: false,
+    parseOk: true,
     errorMessage: 'terms: empty_terms',
     subtopics: [],
     terms: [],
@@ -150,8 +151,26 @@ test('finalizeTermsExtractGate does not Fail-Context when no terms anywhere', ()
     lectureTitle: 'Синтетика',
   });
   assert.equal(gate.proceed, true);
+  assert.equal(gate.course_fallback, false);
   assert.equal(gate.subtopics.length, 1);
   assert.equal(gate.subtopics[0].title, 'Синтетика');
+  assert.equal(gate.reason, 'no_terms_available');
+});
+
+test('finalizeTermsExtractGate: hard parse → proceed=false, no synthetic, no course fallback', () => {
+  const gate = finalizeTermsExtractGate({
+    parseOk: false,
+    errorMessage: 'terms: invalid_json',
+    subtopics: [{ ordinal: 1, title: 'Не должны подставиться' }],
+    terms: [],
+    courseTerms: [{ canonical: 'курс-термин', definition: 'из курса' }],
+    lectureTitle: 'Лекция X',
+  });
+  assert.equal(gate.proceed, false);
+  assert.equal(gate.hard_parse_error, true);
+  assert.equal(gate.course_fallback, false);
+  assert.deepEqual(gate.subtopics, []);
+  assert.match(String(gate.reason), /invalid_json/);
 });
 
 test('resolveTermsForSubtopic: subtopic → lecture → course', () => {

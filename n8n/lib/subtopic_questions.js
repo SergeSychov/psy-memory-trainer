@@ -304,8 +304,13 @@ function mergeThinSubtopics(subtopics, terms, konspekt, opts = {}) {
 
 /**
  * After extract_terms: decide whether to enter the subtopic loop.
- * Empty lecture terms must not fail the lecture when course glossary has definitions
- * (or when we can still synthesize a single subtopic for no_terms_available).
+ *
+ * Soft (proceed=true): parseOk=true with empty lecture terms and/or empty subtopics.
+ *   - course glossary has definitions → keep/synthesize subtopics, course_fallback.
+ *   - nowhere defined → synthesize one subtopic only if list empty → no_terms_available.
+ *
+ * Hard (proceed=false): parseOk=false (invalid_json / llm_truncated / empty / schema).
+ *   → Fail Context (retryable). No synthetic subtopic, no course MCQ.
  */
 function finalizeTermsExtractGate(input) {
   const {
@@ -323,41 +328,43 @@ function finalizeTermsExtractGate(input) {
     .filter((s) => s.ordinal >= 1 && s.title)
     .sort((a, b) => a.ordinal - b.ordinal);
 
+  // Hard parse failure → Fail Context (retryable). Do not invent a subtopic
+  // (would wipe real ones on regenerate) and do not hide the error behind course MCQ.
+  if (!parseOk) {
+    return {
+      proceed: false,
+      subtopics: [],
+      terms: [],
+      reason: errorMessage || 'terms_extract_failed',
+      lecture_terms_empty: true,
+      course_fallback: false,
+      hard_parse_error: true,
+    };
+  }
+
+  const lectureTermsEmpty = !(terms || []).length;
+  let reason = null;
+  let courseFallback = false;
+
   if (!subs.length) {
     subs = [{ ordinal: 1, title }];
   }
 
-  // Hard parse failure without any course fallback → still enter loop with synthetic
-  // subtopic so MCQ path can emit no_terms_available (usage 0), not Fail Context.
-  if (parseOk) {
-    return {
-      proceed: true,
-      subtopics: subs,
-      terms: terms || [],
-      reason: null,
-      lecture_terms_empty: !(terms || []).length,
-      course_fallback: false,
-    };
-  }
-
-  if (courseDefined.length) {
-    return {
-      proceed: true,
-      subtopics: subs,
-      terms: terms || [],
-      reason: 'course_terms_fallback',
-      lecture_terms_empty: true,
-      course_fallback: true,
-    };
+  if (lectureTermsEmpty && courseDefined.length) {
+    courseFallback = true;
+    reason = 'course_terms_fallback';
+  } else if (lectureTermsEmpty && !courseDefined.length) {
+    reason = 'no_terms_available';
   }
 
   return {
     proceed: true,
     subtopics: subs,
     terms: terms || [],
-    reason: errorMessage || 'no_terms_available',
-    lecture_terms_empty: true,
-    course_fallback: false,
+    reason,
+    lecture_terms_empty: lectureTermsEmpty,
+    course_fallback: courseFallback,
+    hard_parse_error: false,
   };
 }
 
