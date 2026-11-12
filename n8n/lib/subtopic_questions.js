@@ -303,6 +303,74 @@ function mergeThinSubtopics(subtopics, terms, konspekt, opts = {}) {
 }
 
 /**
+ * Normalize extract_terms JSON payload (subtopics + terms).
+ * If LLM returned no valid subtopics, synthesize one from lectureTitle
+ * BEFORE binding terms — otherwise `subs[0]` throws and the job stays running.
+ *
+ * Does not set parseOk/fail: caller still owns schema/json errors.
+ */
+function normalizeTermsExtract(data, opts) {
+  const lectureTitle = String((opts && opts.lectureTitle) || '').trim() || 'Лекция';
+  const subs = [];
+  const seen = new Set();
+  for (const s of (data && data.subtopics) || []) {
+    const ordinal = Number(s && s.ordinal);
+    const title = String((s && s.title) || '').trim();
+    if (!Number.isInteger(ordinal) || ordinal < 1 || !title || seen.has(ordinal)) continue;
+    seen.add(ordinal);
+    subs.push({ ordinal, title });
+  }
+  subs.sort((a, b) => a.ordinal - b.ordinal);
+
+  let synthesizedSubtopic = false;
+  if (!subs.length) {
+    subs.push({ ordinal: 1, title: lectureTitle });
+    seen.add(1);
+    synthesizedSubtopic = true;
+  }
+
+  const byKey = new Map();
+  for (const t of (data && data.terms) || []) {
+    const canonical = String((t && t.canonical) || '').trim();
+    if (!canonical) continue;
+    const aliases = Array.isArray(t.aliases)
+      ? t.aliases.map((a) => String(a || '').trim()).filter((a) => a && a !== canonical)
+      : [];
+    let definition = t.definition == null ? null : String(t.definition).trim() || null;
+    let lifeExample = definition && t.life_example != null ? String(t.life_example).trim() || null : null;
+    let so = Number(t.subtopic_ordinal);
+    if (!seen.has(so)) {
+      const lower = subs.filter((s) => s.ordinal <= so).pop();
+      so = lower ? lower.ordinal : subs[0].ordinal;
+    }
+    const key = canonical.toLowerCase();
+    if (byKey.has(key)) {
+      const prev = byKey.get(key);
+      prev.aliases = Array.from(new Set(prev.aliases.concat(aliases)));
+      if (!prev.definition && definition) {
+        prev.definition = definition;
+        prev.life_example = lifeExample;
+      }
+      continue;
+    }
+    byKey.set(key, {
+      canonical,
+      aliases: Array.from(new Set(aliases)),
+      definition,
+      life_example: lifeExample,
+      subtopic_ordinal: so,
+    });
+  }
+  const terms = Array.from(byKey.values());
+  return {
+    subtopics: subs,
+    terms,
+    synthesizedSubtopic,
+    lecture_terms_empty: terms.length === 0,
+  };
+}
+
+/**
  * After extract_terms: decide whether to enter the subtopic loop.
  *
  * Soft (proceed=true): parseOk=true with empty lecture terms and/or empty subtopics.
@@ -461,6 +529,7 @@ module.exports = {
   termsWithDefinition,
   resolveTermsForSubtopic,
   mergeThinSubtopics,
+  normalizeTermsExtract,
   finalizeTermsExtractGate,
   buildQuestionsRequestParts,
 };

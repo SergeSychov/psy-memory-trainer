@@ -1060,8 +1060,10 @@ return [{
   pairedItem: 0,
 }];"""
 
-PARSE_TERMS_JS = r"""const C = $('Run — Init Constants').first().json.constants;
+PARSE_TERMS_JS = r"""__SUBTOPIC_LIB__
+const C = $('Run — Init Constants').first().json.constants;
 const src = $('LLM — Build Terms Request').first().json;
+const L = $('Load — Lecture').first().json;
 __PARSE_FN__
 const p = parseDeepSeek(items[0].json, C, src, 'terms', C.prompt_versions.terms);
 
@@ -1113,56 +1115,17 @@ if (!data || typeof data !== 'object' || !Array.isArray(data.subtopics) || !Arra
   return fail('terms: schema (нужны subtopics[] и terms[])');
 }
 
-const subs = [];
-const seen = new Set();
-for (const s of data.subtopics) {
-  const ordinal = Number(s && s.ordinal);
-  const title = String((s && s.title) || '').trim();
-  if (!Number.isInteger(ordinal) || ordinal < 1 || !title || seen.has(ordinal)) continue;
-  seen.add(ordinal);
-  subs.push({ ordinal, title });
-}
-subs.sort((a, b) => a.ordinal - b.ordinal);
-// empty_subtopics is soft: Terms Ready / course fallback may synthesize a subtopic.
-// Do not Fail Context the whole lecture here.
-
-const byKey = new Map();
-for (const t of data.terms) {
-  const canonical = String((t && t.canonical) || '').trim();
-  if (!canonical) continue;
-  const aliases = Array.isArray(t.aliases)
-    ? t.aliases.map((a) => String(a || '').trim()).filter((a) => a && a !== canonical)
-    : [];
-  let definition = t.definition == null ? null : String(t.definition).trim() || null;
-  let lifeExample = definition && t.life_example != null ? String(t.life_example).trim() || null : null;
-  let so = Number(t.subtopic_ordinal);
-  if (!seen.has(so)) {
-    const lower = subs.filter((s) => s.ordinal <= so).pop();
-    so = lower ? lower.ordinal : subs[0].ordinal;
-  }
-  const key = canonical.toLowerCase();
-  if (byKey.has(key)) {
-    const prev = byKey.get(key);
-    prev.aliases = Array.from(new Set(prev.aliases.concat(aliases)));
-    if (!prev.definition && definition) {
-      prev.definition = definition;
-      prev.life_example = lifeExample;
-    }
-    continue;
-  }
-  byKey.set(key, { canonical, aliases: Array.from(new Set(aliases)), definition, life_example: lifeExample, subtopic_ordinal: so });
-}
-const terms = Array.from(byKey.values());
-// empty_terms is soft when subtopics exist (or even when not): course glossary
-// fallback is applied in LLM — Terms Ready via finalizeTermsExtractGate.
+// empty_subtopics is soft: synthesize before binding terms (avoids TypeError on
+// subs[0] when terms exist). Course fallback / no_terms stay in Terms Ready.
+const norm = normalizeTermsExtract(data, { lectureTitle: L.title || '' });
 result.ok = true;
-result.subtopics = subs;
-result.terms = terms;
-result.lecture_terms_empty = terms.length === 0;
-if (!subs.length) {
+result.subtopics = norm.subtopics;
+result.terms = norm.terms;
+result.lecture_terms_empty = norm.lecture_terms_empty;
+if (norm.synthesizedSubtopic) {
   result.error_message = 'terms: empty_subtopics';
 }
-if (!terms.length) {
+if (!norm.terms.length) {
   result.error_message = result.error_message || 'terms: empty_terms';
 }
 return [{ json: result, pairedItem: 0 }];"""
@@ -1732,7 +1695,7 @@ def build_psy_05() -> tuple[str, list, dict]:
     n_http_terms = deepseek("Shared — DeepSeek Terms", 2200, 140)
     n_parse_terms = code(
         "LLM — Parse Terms",
-        sub_code(PARSE_TERMS_JS, PARSE_FN=PARSE_DEEPSEEK_JS),
+        sub_code(PARSE_TERMS_JS, PARSE_FN=PARSE_DEEPSEEK_JS, SUBTOPIC_LIB=subtopic_lib),
         2420,
         140,
     )

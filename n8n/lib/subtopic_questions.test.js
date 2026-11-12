@@ -9,6 +9,7 @@ const {
   resolveTermsForSubtopic,
   mergeThinSubtopics,
   buildQuestionsRequestParts,
+  normalizeTermsExtract,
   finalizeTermsExtractGate,
   missWindowCenter,
   DEFAULTS,
@@ -123,6 +124,45 @@ test('transcript miss window centers by subtopic position, not document middle',
   assert.ok(first.text.includes('сегмент-0'));
   assert.ok(last.text.includes('сегмент-3') || last.text.includes('сегмент-2'));
   assert.notEqual(first.text, last.text);
+});
+
+test('normalizeTermsExtract: empty subtopics + terms → synthesize, bind, no throw', () => {
+  const out = normalizeTermsExtract(
+    {
+      subtopics: [],
+      terms: [
+        {
+          canonical: 'окно внимания',
+          aliases: ['окно'],
+          definition: 'отрезок фокуса',
+          life_example: 'на кухне',
+          subtopic_ordinal: 3,
+        },
+      ],
+    },
+    { lectureTitle: 'Лекция без подтем' },
+  );
+  assert.equal(out.synthesizedSubtopic, true);
+  assert.equal(out.subtopics.length, 1);
+  assert.equal(out.subtopics[0].ordinal, 1);
+  assert.equal(out.subtopics[0].title, 'Лекция без подтем');
+  assert.equal(out.terms.length, 1);
+  assert.equal(out.terms[0].subtopic_ordinal, 1);
+  assert.equal(out.lecture_terms_empty, false);
+});
+
+test('normalizeTermsExtract: keeps real subtopics and does not synthesize', () => {
+  const out = normalizeTermsExtract(
+    {
+      subtopics: [{ ordinal: 2, title: 'Якорь' }],
+      terms: [{ canonical: 'якорь', definition: 'жест', subtopic_ordinal: 2 }],
+    },
+    { lectureTitle: 'Игнор' },
+  );
+  assert.equal(out.synthesizedSubtopic, false);
+  assert.equal(out.subtopics.length, 1);
+  assert.equal(out.subtopics[0].title, 'Якорь');
+  assert.equal(out.terms[0].subtopic_ordinal, 2);
 });
 
 test('finalizeTermsExtractGate: soft empty terms + course → proceed with course_fallback', () => {
