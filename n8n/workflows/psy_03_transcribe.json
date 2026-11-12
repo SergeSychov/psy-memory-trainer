@@ -2,7 +2,7 @@
   "name": "psy_03_transcribe",
   "nodes": [
     {
-      "id": "1bae4351-9ff8-4ca3-8d9c-56a64f241e22",
+      "id": "accd0486-28a1-4222-b840-184eb6d060a7",
       "name": "NOTE — ASR",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
@@ -18,7 +18,7 @@
       }
     },
     {
-      "id": "ac8375b4-8c18-4e88-a4ad-c57f77e3e5a0",
+      "id": "e2fd96ef-6655-4bff-a3c3-ec78993f24a3",
       "name": "NOTE — DB",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
@@ -34,7 +34,7 @@
       }
     },
     {
-      "id": "26749cd3-bc6f-433f-9643-afbe2bc2b7da",
+      "id": "f5a29eb2-6839-4711-a813-d0fa9ca1b725",
       "name": "In — Manual",
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
@@ -45,7 +45,7 @@
       "parameters": {}
     },
     {
-      "id": "d5d21f94-c9ac-4059-940e-4854e98b4b6c",
+      "id": "26a230f6-72fe-47f5-b502-fc23829eb675",
       "name": "In — Execute",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1,
@@ -56,7 +56,7 @@
       "parameters": {}
     },
     {
-      "id": "4bb3028f-84f8-4962-b251-1e608b5276b8",
+      "id": "4c1d1c53-6356-4557-bb28-e3cd26f676ae",
       "name": "Run — Init Constants",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -69,7 +69,7 @@
       }
     },
     {
-      "id": "c3d3396e-67f3-4ff3-8cf8-f7d5ec877b32",
+      "id": "c9224979-5f6f-4432-a3d1-75204ebfa3c9",
       "name": "Run — Create Job",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -92,7 +92,7 @@
       }
     },
     {
-      "id": "1d0dd835-0aae-42cf-b2cf-08e1973fa92e",
+      "id": "600879af-1901-4d22-a987-1c27417cbf79",
       "name": "Run — Has Job",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
@@ -109,7 +109,7 @@
           },
           "conditions": [
             {
-              "id": "823d2ac9-9431-4572-941c-953ffbdfd61d",
+              "id": "ed21b251-1a91-43be-b1d9-8b85b612224e",
               "leftValue": "={{ $json.id }}",
               "rightValue": "",
               "operator": {
@@ -123,7 +123,7 @@
       }
     },
     {
-      "id": "b973fa33-250f-4bab-a83f-5e0fa1241b89",
+      "id": "7386e39f-7081-4334-9456-576811b674ff",
       "name": "Load — Glossary",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -146,7 +146,7 @@
       }
     },
     {
-      "id": "c73f0d32-6f50-4565-9e4a-9da329a4808c",
+      "id": "0e2f228b-03f7-49b4-9b9d-27fcecef98ce",
       "name": "ASR — Prep Request",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -159,7 +159,7 @@
       }
     },
     {
-      "id": "e1d8d507-6430-419b-94ea-b0826071b4c0",
+      "id": "2e472671-e06b-4ae3-96d7-67223f8d3e57",
       "name": "ASR — Transcribe",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.5,
@@ -189,7 +189,7 @@
       "onError": "continueErrorOutput"
     },
     {
-      "id": "0b718992-2d11-44d0-b44f-b8cbac3fd81d",
+      "id": "858bb22f-1784-4eeb-b673-bb7fb005a76f",
       "name": "DB — Save Transcript",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -212,7 +212,7 @@
       }
     },
     {
-      "id": "d4d2c224-b5e8-4b28-ae61-32ced5b731a5",
+      "id": "dfb90317-6cd1-435b-adb3-8639bebc4b5a",
       "name": "Fin — Fail Context",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -225,7 +225,7 @@
       }
     },
     {
-      "id": "e8c700c1-7417-4ffc-9985-89c8725577d0",
+      "id": "f2ff0d06-e4ce-4876-ba2f-52dc98c4859c",
       "name": "Fin — Fail Job",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -248,7 +248,7 @@
       }
     },
     {
-      "id": "fd002d6b-b7e7-46f1-a24d-b82de2b3456a",
+      "id": "50626785-f93b-4e59-a8f0-6bc88bdf502f",
       "name": "Fin — Kick psy_04",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,

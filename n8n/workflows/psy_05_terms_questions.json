@@ -2,7 +2,7 @@
   "name": "psy_05_terms_questions",
   "nodes": [
     {
-      "id": "2242e00c-a878-46b7-b07f-c4f5d8826b12",
+      "id": "1a1a8e3b-41e4-4f50-b96c-f3010eaf8a14",
       "name": "NOTE — In",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
@@ -18,7 +18,7 @@
       }
     },
     {
-      "id": "a7c4f9e9-77ae-44a9-8397-faa61290efd9",
+      "id": "0a56c86d-79a1-4370-b9ce-cbda9519a9ba",
       "name": "NOTE — Run/Load",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
@@ -34,7 +34,7 @@
       }
     },
     {
-      "id": "6bb2b9d5-84d3-49f1-aca7-fec34fd270dc",
+      "id": "d32c573d-d138-4b95-8317-36d7ac2e1979",
       "name": "NOTE — LLM",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
@@ -43,14 +43,14 @@
         40
       ],
       "parameters": {
-        "content": "## LLM\n`extract_terms_v2` → upsert terms/subtopics → per subtopic `gen_questions_v2` (validate inline; one fix/top-up retry; partial success + `short_questions`).",
+        "content": "## LLM\n`extract_terms_v2` → merge thin subtopics → upsert → per subtopic `gen_questions_v3` (fragment caps; fallback terms; one top-up; `short_questions`).",
         "width": 560,
         "height": 160,
         "color": 5
       }
     },
     {
-      "id": "f5494f9e-e074-4f8a-a576-5c079bb55503",
+      "id": "9072edc8-a648-46a9-b291-3a135371abb2",
       "name": "NOTE — DB/Fin",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
@@ -59,14 +59,14 @@
         40
       ],
       "parameters": {
-        "content": "## DB / Fin\nUpsert questions by (subtopic_id, ordinal_in_subtopic) WHERE kind='life_mcq'. Job done + lecture `questions_ready`; counters incl. `short_questions` in jobs.payload.",
+        "content": "## DB / Fin\nUpsert questions by (subtopic_id, ordinal_in_subtopic) WHERE kind='life_mcq'. Job done + lecture `questions_ready`; counters incl. `short_questions` in jobs.payload. empty_konspekt keeps lecture status.",
         "width": 480,
         "height": 160,
         "color": 5
       }
     },
     {
-      "id": "9ef45942-11b7-4ed4-9489-1fa0b7b73c63",
+      "id": "2b3f918c-e07a-451b-98ed-2562375d780b",
       "name": "In — Manual",
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
@@ -77,7 +77,7 @@
       "parameters": {}
     },
     {
-      "id": "814e4a07-ddda-48cd-878e-eeb8b6ecd9bf",
+      "id": "b324f8be-e5d2-4bdd-b708-a4156ad03573",
       "name": "In — Execute",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.1,
@@ -90,7 +90,7 @@
       }
     },
     {
-      "id": "37e5018e-4aad-4f00-9dc1-276cc4e9877c",
+      "id": "187c6e2a-2f15-490d-8d19-431321452daf",
       "name": "Run — Init Constants",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -99,11 +99,11 @@
         380
       ],
       "parameters": {
-        "jsCode": "const input = (items[0] && items[0].json) || {};\nconst constants = {\n  workflow_version: 'psy_05_terms_questions_v1',\n  workflow_name: 'psy_05_terms_questions',\n  llm_model: 'deepseek-flash',\n  thinking: { type: 'disabled' },\n  temperature_terms: 0.2,\n  temperature_questions: 0.5,\n  max_output_tokens: 8000,\n  // DeepSeek peak prices, USD per 1M tokens (conservative; off-peak discount ignored).\n  prices_usd_per_1m: { tier: 'peak', miss: 0.3, hit: 0.006, out: 1.2 },\n  monthly_budget_usd: 5,\n  budget_stop_ratio: 0.8,\n  max_cost_usd_per_lecture: 0.3,\n  chars_per_token: 2,\n  terms_max_input_tokens: 80000,\n  est_output_tokens_terms: 6000,\n  est_output_tokens_questions: 6000,\n  est_input_tokens_questions: 12000,\n  est_subtopics_for_budget: 8,\n  questions_target: 10,\n  max_questions_per_subtopic: 14,\n  questions_transcript_max_chars: 20000,\n  prompt_versions: { terms: 'extract_terms_v2', questions: 'gen_questions_v2' },\n  max_attempts: 3,\n  stale_running_hours: 4,\n};\n// In — Execute may only LOWER these limits (never raise).\n['max_cost_usd_per_lecture', 'monthly_budget_usd'].forEach((key) => {\n  const v = Number(input[key]);\n  if (Number.isFinite(v) && v > 0 && v < constants[key]) constants[key] = v;\n});\nreturn [{ json: { constants }, pairedItem: 0 }];"
+        "jsCode": "const input = (items[0] && items[0].json) || {};\nconst constants = {\n  workflow_version: 'psy_05_terms_questions_v2',\n  workflow_name: 'psy_05_terms_questions',\n  llm_model: 'deepseek-flash',\n  thinking: { type: 'disabled' },\n  temperature_terms: 0.2,\n  temperature_questions: 0.5,\n  max_output_tokens: 8000,\n  // DeepSeek peak prices, USD per 1M tokens (conservative; off-peak discount ignored).\n  prices_usd_per_1m: { tier: 'peak', miss: 0.3, hit: 0.006, out: 1.2 },\n  monthly_budget_usd: 5,\n  budget_stop_ratio: 0.8,\n  max_cost_usd_per_lecture: 0.3,\n  chars_per_token: 2,\n  terms_max_input_tokens: 80000,\n  est_output_tokens_terms: 6000,\n  est_output_tokens_questions: 6000,\n  est_input_tokens_questions: 8000,\n  est_subtopics_for_budget: 8,\n  questions_target: 10,\n  max_questions_per_subtopic: 14,\n  questions_konspekt_max_chars: 5500,\n  questions_transcript_max_chars: 7000,\n  questions_thin_min_chars: 400,\n  prompt_versions: { terms: 'extract_terms_v2', questions: 'gen_questions_v3' },\n  max_attempts: 3,\n  stale_running_hours: 4,\n};\n// In — Execute may only LOWER these limits (never raise).\n['max_cost_usd_per_lecture', 'monthly_budget_usd'].forEach((key) => {\n  const v = Number(input[key]);\n  if (Number.isFinite(v) && v > 0 && v < constants[key]) constants[key] = v;\n});\nreturn [{ json: { constants }, pairedItem: 0 }];"
       }
     },
     {
-      "id": "a5ec24c2-7946-49f7-9535-dc95fc7ea4ce",
+      "id": "a09d668d-e851-4e60-8072-982327bba7fb",
       "name": "Load — Backfill",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -126,7 +126,7 @@
       }
     },
     {
-      "id": "0c216477-8e5f-44da-abe3-ae7fa82e11b9",
+      "id": "e0e35992-4efc-40a3-8f95-81ec03e6a9ba",
       "name": "Run — Create Job",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -149,7 +149,7 @@
       }
     },
     {
-      "id": "d03e2bc6-8a65-42af-9866-377f5ce1bf25",
+      "id": "d00e5c53-18b0-4359-8c80-b863f8c078d7",
       "name": "Run — Has Job",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
@@ -166,7 +166,7 @@
           },
           "conditions": [
             {
-              "id": "dec821ec-3e1d-443e-a9b4-a279cbb6e09e",
+              "id": "72524e03-3a94-4920-92b1-ddf7deac66b4",
               "leftValue": "={{ $json.id }}",
               "rightValue": "",
               "operator": {
@@ -180,7 +180,7 @@
       }
     },
     {
-      "id": "992b0cd6-271f-4467-96f3-fbb3cac007d3",
+      "id": "eefe4223-ecf1-42e1-93ec-6913c3cd6e6b",
       "name": "Load — Lecture",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -203,7 +203,7 @@
       }
     },
     {
-      "id": "dad6d005-fe22-4631-9cdd-ca8968bb077d",
+      "id": "665f4343-3647-4abf-9609-57388a42bf34",
       "name": "Load — No Cards",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
@@ -220,7 +220,7 @@
           },
           "conditions": [
             {
-              "id": "7fa9d455-c7cb-4d1b-acfd-ca751735fcf8",
+              "id": "3ed470b1-be30-4866-849b-30650a97c0fc",
               "leftValue": "={{ String($json.cards_count) }}",
               "rightValue": "0",
               "operator": {
@@ -234,7 +234,7 @@
       }
     },
     {
-      "id": "1fa8e104-0180-42f9-a4bb-1706751924ef",
+      "id": "4033ef0b-2389-4f1d-9b6e-f3ffb58c71bc",
       "name": "Load — Has Konspekt",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
@@ -251,7 +251,7 @@
           },
           "conditions": [
             {
-              "id": "b19e072e-6f56-4a36-9b33-568e1efa9583",
+              "id": "298dd63a-a085-451d-ada8-84c3a5d39858",
               "leftValue": "={{ String($json.konspekt_md || '').trim() }}",
               "rightValue": "",
               "operator": {
@@ -265,7 +265,7 @@
       }
     },
     {
-      "id": "d61c45fc-8a93-433f-bee9-b74e9e4d6a29",
+      "id": "3427fc7d-309a-4865-9872-8a7aec4fe2cb",
       "name": "LLM — Build Terms Request",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -278,7 +278,7 @@
       }
     },
     {
-      "id": "85c901b1-3988-441c-8b07-0d2f2459f299",
+      "id": "dc30e88f-a570-4bd1-9eef-2b46f4562135",
       "name": "LLM — Budget OK Terms",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
@@ -295,7 +295,7 @@
           },
           "conditions": [
             {
-              "id": "0f6d3104-9716-428f-8a11-8fe8e2183c28",
+              "id": "c3254ef0-f042-462a-a4a6-723b5bb975e0",
               "leftValue": "={{ String($json.budget_exceeded) }}",
               "rightValue": "false",
               "operator": {
@@ -309,7 +309,7 @@
       }
     },
     {
-      "id": "f85e0924-dd57-4601-a695-512aea63b623",
+      "id": "d318fa61-6262-4e04-840f-b5b964cf3691",
       "name": "Shared — DeepSeek Terms",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.5,
@@ -339,7 +339,7 @@
       "onError": "continueErrorOutput"
     },
     {
-      "id": "1e55ac2a-03a5-4821-ba56-1ce3b0c05907",
+      "id": "de08a851-b10e-4f08-af0a-a9dbc5cb0d30",
       "name": "LLM — Parse Terms",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -352,7 +352,7 @@
       }
     },
     {
-      "id": "5baa7703-867a-47aa-acd4-e7c032076014",
+      "id": "3b4d2bb2-9a39-4a7f-926b-e50966ceee82",
       "name": "DB — Log Usage Terms",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -375,7 +375,7 @@
       }
     },
     {
-      "id": "86c20b39-3923-4494-abed-63f53b2866dc",
+      "id": "6461ecdd-dbf2-4741-ba72-093da03f7a7f",
       "name": "LLM — Terms Ready",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -388,7 +388,7 @@
       }
     },
     {
-      "id": "9d3d26e2-93e7-4354-b59c-800cc22401c4",
+      "id": "504207b5-cfed-42eb-ba7a-c89afdf95a5c",
       "name": "LLM — Terms OK",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
@@ -405,7 +405,7 @@
           },
           "conditions": [
             {
-              "id": "06b4999c-68bc-47a1-a786-61836981b9d8",
+              "id": "ffc344e5-fd00-4ccc-a76d-cc459117fa0c",
               "leftValue": "={{ String($json.ok) }}",
               "rightValue": "true",
               "operator": {
@@ -419,19 +419,32 @@
       }
     },
     {
-      "id": "6bca2909-cbec-4eb2-b125-17d90733f42a",
+      "id": "48896351-ace7-41b7-ba0c-1fac8ad772b0",
+      "name": "LLM — Merge Thin Subtopics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3180,
+        140
+      ],
+      "parameters": {
+        "jsCode": "/**\n * Fragment picking + thin-subtopic merge for psy_05.\n * Pure helpers — used from n8n Code (embedded) and node:test.\n */\n\nconst DEFAULTS = {\n  konspektMaxChars: 5500,\n  transcriptMaxChars: 7000,\n  thinMinChars: 400,\n  titleTokenMinLen: 5,\n};\n\nfunction norm(s) {\n  return String(s || '')\n    .toLowerCase()\n    .replace(/ё/g, 'е');\n}\n\n/** Significant tokens from a title/phrase — no short 4-char stems. */\nfunction titleTokens(phrase, minLen = DEFAULTS.titleTokenMinLen) {\n  return norm(phrase)\n    .split(/[^а-яa-z0-9]+/)\n    .filter((w) => w.length >= minLen);\n}\n\nfunction sectionList(konspekt) {\n  const text = String(konspekt || '').trim();\n  if (!text) return [];\n  return text.split(/\\n(?=##\\s)/).map((s) => s.trim()).filter(Boolean);\n}\n\nfunction scoreSection(sectionText, title, terms) {\n  const t = norm(sectionText);\n  let score = 0;\n  const tokens = titleTokens(title);\n  for (const tok of tokens) {\n    if (t.includes(tok)) score += 3;\n  }\n  // Prefer heading that starts with the title words\n  const heading = (sectionText.split('\\n')[0] || '');\n  const h = norm(heading);\n  if (tokens.length && tokens.every((tok) => h.includes(tok))) score += 8;\n  for (const term of terms || []) {\n    const names = [term.canonical].concat(term.aliases || []).map(norm).filter(Boolean);\n    for (const name of names) {\n      if (name.length >= 4 && t.includes(name)) score += 2;\n    }\n  }\n  return score;\n}\n\n/**\n * Pick konspekt fragment for one subtopic: best matching ## section ± neighbour,\n * capped. Never falls back to the whole konspekt.\n */\nfunction pickKonspektFragment(konspekt, title, terms, maxChars = DEFAULTS.konspektMaxChars) {\n  const sections = sectionList(konspekt);\n  if (!sections.length) {\n    return { text: '', matched: false, score: 0 };\n  }\n  const scored = sections.map((text, idx) => ({\n    idx,\n    text,\n    score: scoreSection(text, title, terms),\n  }));\n  scored.sort((a, b) => b.score - a.score || a.idx - b.idx);\n  const best = scored[0];\n  if (!best || best.score <= 0) {\n    // No match: take a short window around the ordinal-ish position, not the whole doc.\n    const approx = Math.min(\n      sections.length - 1,\n      Math.max(0, Math.floor(sections.length / 2)),\n    );\n    const window = [sections[approx]];\n    if (approx > 0) window.unshift(sections[approx - 1]);\n    if (approx + 1 < sections.length) window.push(sections[approx + 1]);\n    let text = window.join('\\n\\n');\n    if (text.length > maxChars) text = text.slice(0, maxChars);\n    return { text, matched: false, score: 0 };\n  }\n  const idxs = new Set([best.idx]);\n  if (best.idx > 0) idxs.add(best.idx - 1);\n  if (best.idx + 1 < sections.length) idxs.add(best.idx + 1);\n  let text = Array.from(idxs)\n    .sort((a, b) => a - b)\n    .map((i) => sections[i])\n    .join('\\n\\n');\n  if (text.length > maxChars) {\n    // Prefer keeping the best section fully, then trim.\n    const primary = sections[best.idx];\n    if (primary.length >= maxChars) {\n      text = primary.slice(0, maxChars);\n    } else {\n      text = text.slice(0, maxChars);\n    }\n  }\n  return { text, matched: true, score: best.score };\n}\n\nfunction textMatches(haystack, title, terms) {\n  const t = norm(haystack);\n  if (!t) return false;\n  const tokens = titleTokens(title);\n  if (tokens.length && tokens.every((tok) => t.includes(tok))) return true;\n  if (tokens.some((tok) => t.includes(tok))) return true;\n  for (const term of terms || []) {\n    const names = [term.canonical].concat(term.aliases || []).map(norm).filter(Boolean);\n    for (const name of names) {\n      if (name.length >= 5 && t.includes(name)) return true;\n    }\n  }\n  return false;\n}\n\n/**\n * Transcript: only matching segments ±1 neighbour, capped.\n */\nfunction pickTranscriptFragment(chunks, title, terms, maxChars = DEFAULTS.transcriptMaxChars) {\n  let segs = (Array.isArray(chunks) ? chunks : [])\n    .map((c) => String((c && c.text) || '').trim())\n    .filter(Boolean);\n  if (!segs.length) {\n    return { text: '', matched: false };\n  }\n  const hit = new Set();\n  segs.forEach((text, i) => {\n    if (textMatches(text, title, terms)) {\n      hit.add(i);\n      if (i > 0) hit.add(i - 1);\n      if (i + 1 < segs.length) hit.add(i + 1);\n    }\n  });\n  const order = Array.from(hit).sort((a, b) => a - b);\n  const parts = [];\n  let used = 0;\n  for (const i of order) {\n    const text = segs[i];\n    if (!text) continue;\n    if (used + text.length > maxChars) break;\n    parts.push(text);\n    used += text.length + 1;\n  }\n  return {\n    text: parts.length ? parts.join('\\n') : '',\n    matched: parts.length > 0,\n  };\n}\n\nfunction termsForOrdinal(terms, ordinal) {\n  return (terms || []).filter((t) => Number(t.subtopic_ordinal) === Number(ordinal));\n}\n\nfunction termsWithDefinition(terms) {\n  return (terms || []).filter((t) => t && t.definition != null && String(t.definition).trim() !== '');\n}\n\n/**\n * Resolve term list for MCQ: prefer subtopic terms with definition;\n * else fall back to any lecture terms with definition (never empty skip).\n */\nfunction resolveTermsForSubtopic(ordinal, allTerms) {\n  const own = termsWithDefinition(termsForOrdinal(allTerms, ordinal));\n  if (own.length) {\n    return { terms: own, fallback: false };\n  }\n  const lecture = termsWithDefinition(allTerms);\n  return { terms: lecture, fallback: lecture.length > 0 };\n}\n\n/**\n * Merge subtopics whose konspekt fragment is thinner than thinMinChars into a neighbour.\n * Re-numbers ordinals 1..N and remaps term.subtopic_ordinal.\n */\nfunction mergeThinSubtopics(subtopics, terms, konspekt, opts = {}) {\n  const thinMin = opts.thinMinChars != null ? opts.thinMinChars : DEFAULTS.thinMinChars;\n  const konspektMax = opts.konspektMaxChars != null ? opts.konspektMaxChars : DEFAULTS.konspektMaxChars;\n  let list = (subtopics || [])\n    .map((s) => ({ ordinal: Number(s.ordinal), title: String(s.title || '').trim() }))\n    .filter((s) => s.ordinal >= 1 && s.title)\n    .sort((a, b) => a.ordinal - b.ordinal);\n\n  if (list.length <= 1) {\n    return { subtopics: list, terms: (terms || []).slice(), merges: [] };\n  }\n\n  const merges = [];\n  let changed = true;\n  while (changed && list.length > 1) {\n    changed = false;\n    for (let i = 0; i < list.length; i++) {\n      const sub = list[i];\n      const ownTerms = termsForOrdinal(terms, sub.ordinal);\n      // Thinness = primary matched ## section alone (neighbours do not inflate).\n      const sections = sectionList(konspekt);\n      const scored = sections.map((text, idx) => ({\n        idx,\n        text,\n        score: scoreSection(text, sub.title, ownTerms),\n      }));\n      scored.sort((a, b) => b.score - a.score || a.idx - b.idx);\n      const primary = scored[0] && scored[0].score > 0 ? scored[0].text : '';\n      const primaryChars = primary.length;\n      if (primaryChars >= thinMin) continue;\n      // Merge into neighbour with more primary content (prefer previous, else next).\n      let targetIdx = i > 0 ? i - 1 : i + 1;\n      if (i > 0 && i + 1 < list.length) {\n        const prevOwn = termsForOrdinal(terms, list[i - 1].ordinal);\n        const nextOwn = termsForOrdinal(terms, list[i + 1].ordinal);\n        const prevPrimary = sections\n          .map((text) => ({ text, score: scoreSection(text, list[i - 1].title, prevOwn) }))\n          .sort((a, b) => b.score - a.score)[0];\n        const nextPrimary = sections\n          .map((text) => ({ text, score: scoreSection(text, list[i + 1].title, nextOwn) }))\n          .sort((a, b) => b.score - a.score)[0];\n        const prevLen = prevPrimary && prevPrimary.score > 0 ? prevPrimary.text.length : 0;\n        const nextLen = nextPrimary && nextPrimary.score > 0 ? nextPrimary.text.length : 0;\n        targetIdx = nextLen > prevLen ? i + 1 : i - 1;\n      }\n      const target = list[targetIdx];\n      merges.push({\n        from_ordinal: sub.ordinal,\n        from_title: sub.title,\n        into_ordinal: target.ordinal,\n        into_title: target.title,\n        fragment_chars: primaryChars,\n      });\n      target.title = target.title + ' / ' + sub.title;\n      const fromOrd = sub.ordinal;\n      const intoOrd = target.ordinal;\n      terms = (terms || []).map((t) => {\n        if (Number(t.subtopic_ordinal) === fromOrd) {\n          return { ...t, subtopic_ordinal: intoOrd };\n        }\n        return t;\n      });\n      list.splice(i, 1);\n      changed = true;\n      break;\n    }\n  }\n\n  // Re-number ordinals densely and remap terms.\n  const ordMap = new Map();\n  list = list.map((s, idx) => {\n    const neu = idx + 1;\n    ordMap.set(s.ordinal, neu);\n    return { ordinal: neu, title: s.title };\n  });\n  const remappedTerms = (terms || []).map((t) => {\n    const old = Number(t.subtopic_ordinal);\n    const neu = ordMap.has(old) ? ordMap.get(old) : old;\n    return { ...t, subtopic_ordinal: neu };\n  });\n\n  return { subtopics: list, terms: remappedTerms, merges };\n}\n\n/**\n * Build the questions-request payload fields (no LLM). Never skips for missing subtopic terms.\n */\nfunction buildQuestionsRequestParts(input) {\n  const {\n    subtopic,\n    allTerms,\n    konspektMd,\n    chunks,\n    constants = {},\n  } = input;\n  const konspektMax = constants.questions_konspekt_max_chars || DEFAULTS.konspektMaxChars;\n  const transcriptMax = constants.questions_transcript_max_chars || DEFAULTS.transcriptMaxChars;\n\n  const resolved = resolveTermsForSubtopic(subtopic.ordinal, allTerms);\n  const termCanonicals = resolved.terms.map((t) => t.canonical);\n  const konspektFrag = pickKonspektFragment(\n    konspektMd,\n    subtopic.title,\n    resolved.terms,\n    konspektMax,\n  );\n  const transcriptFrag = pickTranscriptFragment(\n    chunks,\n    subtopic.title,\n    resolved.terms,\n    transcriptMax,\n  );\n\n  const termsBlock = resolved.terms.length\n    ? resolved.terms.map((t) => '- ' + t.canonical + ': ' + t.definition).join('\\n')\n    : '- (нет терминов с определением — опирайся только на фрагмент конспекта; term_canonical не выдумывай)';\n\n  const transcriptText = transcriptFrag.text\n    || '[фрагмент не найден — опирайся только на конспект]';\n\n  const user = [\n    'ПОДТЕМА\\n' + subtopic.ordinal + '. ' + subtopic.title,\n    'ТЕРМИНЫ\\n' + termsBlock,\n    'ФРАГМЕНТ КОНСПЕКТА\\n' + konspektFrag.text,\n    'ФРАГМЕНТ ТРАНСКРИПТА\\n' + transcriptText,\n  ].join('\\n\\n');\n\n  return {\n    skip: false,\n    skip_reason: null,\n    terms_fallback: resolved.fallback,\n    term_canonicals: termCanonicals,\n    konspekt_fragment: konspektFrag.text,\n    konspekt_matched: konspektFrag.matched,\n    transcript_fragment: transcriptText,\n    transcript_matched: transcriptFrag.matched,\n    user_base: user,\n  };\n}\nconst item = items[0].json;\nconst L = $('Load — Lecture').first().json;\nconst C = $('Run — Init Constants').first().json.constants;\nconst merged = mergeThinSubtopics(\n  item.subtopics || [],\n  item.terms || [],\n  L.konspekt_md || '',\n  {\n    thinMinChars: C.questions_thin_min_chars,\n    konspektMaxChars: C.questions_konspekt_max_chars,\n  },\n);\nreturn [{\n  json: {\n    ...item,\n    subtopics: merged.subtopics,\n    terms: merged.terms,\n    thin_merges: merged.merges,\n  },\n  pairedItem: 0,\n}];"
+      }
+    },
+    {
+      "id": "dde93bfb-121e-4cb9-8453-4c6423bf342f",
       "name": "DB — Upsert Terms",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        3300,
+        3400,
         140
       ],
       "parameters": {
         "operation": "executeQuery",
         "query": "WITH params AS (\n  SELECT $1::uuid AS course_id, $2::uuid AS lecture_id, $3::jsonb AS terms\n), src AS (\n  SELECT t.canonical, t.aliases, t.definition, t.life_example\n  FROM params p\n  CROSS JOIN LATERAL jsonb_to_recordset(p.terms) AS t(\n    canonical text, aliases jsonb, definition text, life_example text\n  )\n), up AS (\n  INSERT INTO psy.glossary_terms AS g (course_id, lecture_id, canonical, aliases, definition, life_example)\n  SELECT p.course_id, p.lecture_id, s.canonical,\n         ARRAY(SELECT jsonb_array_elements_text(COALESCE(s.aliases, '[]'::jsonb))),\n         s.definition, s.life_example\n  FROM params p\n  CROSS JOIN src s\n  ON CONFLICT (course_id, canonical) DO UPDATE SET\n    lecture_id = COALESCE(g.lecture_id, EXCLUDED.lecture_id),\n    aliases = ARRAY(\n      SELECT DISTINCT a\n      FROM unnest(g.aliases || EXCLUDED.aliases) AS a\n      WHERE btrim(a) <> '' AND a <> g.canonical\n      ORDER BY a\n    ),\n    definition = CASE\n      WHEN NULLIF(btrim(g.definition), '') IS NULL THEN EXCLUDED.definition\n      WHEN g.lecture_id IS NOT DISTINCT FROM EXCLUDED.lecture_id AND EXCLUDED.definition IS NOT NULL\n        THEN EXCLUDED.definition\n      ELSE g.definition\n    END,\n    life_example = CASE\n      WHEN NULLIF(btrim(g.definition), '') IS NULL THEN EXCLUDED.life_example\n      WHEN g.lecture_id IS NOT DISTINCT FROM EXCLUDED.lecture_id AND EXCLUDED.definition IS NOT NULL\n        THEN EXCLUDED.life_example\n      ELSE g.life_example\n    END\n  RETURNING g.id\n)\nSELECT count(*)::int AS terms_upserted FROM up",
         "options": {
-          "queryReplacement": "={{ [\n  $('Load — Lecture').first().json.course_id,\n  $('Load — Lecture').first().json.lecture_id,\n  JSON.stringify($('LLM — Parse Terms').first().json.terms)\n] }}"
+          "queryReplacement": "={{ [\n  $('Load — Lecture').first().json.course_id,\n  $('Load — Lecture').first().json.lecture_id,\n  JSON.stringify($('LLM — Merge Thin Subtopics').first().json.terms)\n] }}"
         }
       },
       "credentials": {
@@ -442,19 +455,19 @@
       }
     },
     {
-      "id": "e83b3733-bd0e-49aa-abf0-8e2da63d1217",
+      "id": "e0e80232-7198-4218-b91f-e1b220dcbf54",
       "name": "DB — Upsert Subtopics",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        3520,
+        3620,
         140
       ],
       "parameters": {
         "operation": "executeQuery",
         "query": "WITH params AS (\n  SELECT $1::uuid AS lecture_id, $2::jsonb AS subtopics\n), ins AS (\n  INSERT INTO psy.subtopics (lecture_id, ordinal, title)\n  SELECT p.lecture_id, s.ordinal, s.title\n  FROM params p\n  CROSS JOIN LATERAL jsonb_to_recordset(p.subtopics) AS s(ordinal int, title text)\n  ON CONFLICT (lecture_id, ordinal) DO UPDATE SET title = EXCLUDED.title\n  RETURNING id, ordinal, title\n), del AS (\n  DELETE FROM psy.subtopics st\n  USING params p\n  WHERE st.lecture_id = p.lecture_id\n    AND st.ordinal NOT IN (SELECT ordinal FROM ins)\n    AND NOT EXISTS (\n      SELECT 1 FROM psy.cards c\n      JOIN psy.questions q ON q.id = c.question_id\n      WHERE q.lecture_id = p.lecture_id\n    )\n  RETURNING st.id\n)\nSELECT i.id AS subtopic_id, i.ordinal, i.title, (SELECT count(*) FROM del)::int AS deleted_subtopics\nFROM ins i\nORDER BY i.ordinal",
         "options": {
-          "queryReplacement": "={{ [\n  $('Load — Lecture').first().json.lecture_id,\n  JSON.stringify($('LLM — Parse Terms').first().json.subtopics)\n] }}"
+          "queryReplacement": "={{ [\n  $('Load — Lecture').first().json.lecture_id,\n  JSON.stringify($('LLM — Merge Thin Subtopics').first().json.subtopics)\n] }}"
         }
       },
       "credentials": {
@@ -465,12 +478,12 @@
       }
     },
     {
-      "id": "07b161e1-d00e-4d0b-8b9f-71119e0a586e",
+      "id": "cda65409-4717-4ce8-bb06-b6ee29debe70",
       "name": "Run — Loop Subtopics",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        3740,
+        3840,
         140
       ],
       "parameters": {
@@ -479,19 +492,19 @@
       }
     },
     {
-      "id": "43164cf6-32b2-48a5-b8b2-992bb109e9a9",
+      "id": "0e6bb969-bf42-4141-bc59-a15cddc3bd86",
       "name": "DB — Load Spend",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        3960,
+        4060,
         220
       ],
       "parameters": {
         "operation": "executeQuery",
         "query": "SELECT\n  $1::uuid AS subtopic_id,\n  $2::int AS ordinal,\n  $3::text AS title,\n  COALESCE((\n    SELECT sum(u.cost_usd) FROM psy.llm_usage u\n    WHERE u.created_at >= date_trunc('month', now())\n  ), 0)::float8 AS spent_month_usd,\n  COALESCE((\n    SELECT sum(u.cost_usd) FROM psy.llm_usage u WHERE u.lecture_id = $4::uuid\n  ), 0)::float8 AS spent_lecture_usd",
         "options": {
-          "queryReplacement": "={{ [\n  $json.subtopic_id,\n  $json.ordinal,\n  $json.title,\n  $('Load — Lecture').first().json.lecture_id\n] }}"
+          "queryReplacement": "={{ [\n  $json.subtopic_id || $json.id,\n  $json.ordinal,\n  $json.title,\n  $('Load — Lecture').first().json.lecture_id\n] }}"
         }
       },
       "credentials": {
@@ -502,52 +515,21 @@
       }
     },
     {
-      "id": "899cce79-17fa-4937-9023-9ec5f9a103c4",
+      "id": "90517c64-e2e2-45d8-a185-bc9177a6ac92",
       "name": "LLM — Build Questions Request",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        4180,
+        4280,
         220
       ],
       "parameters": {
-        "jsCode": "const C = $('Run — Init Constants').first().json.constants;\nconst L = $('Load — Lecture').first().json;\nconst T = $('LLM — Parse Terms').first().json;\nconst sub = items[0].json;\nconst SYSTEM = \"Ты пишешь вопросы с выбором ответа по одной подтеме одной лекции. Сразу JSON, без рассуждений вслух.\\n\\nВход — одна подтема:\\nПОДТЕМА — ordinal и title\\nТЕРМИНЫ — canonical и definition только этой подтемы\\nФРАГМЕНТ КОНСПЕКТА\\nФРАГМЕНТ ТРАНСКРИПТА\\nОПЦИОНАЛЬНО: ОШИБКИ_ВАЛИДАЦИИ или ДОБОР — короткий список, что исправить или сколько вопросов не хватает\\n\\nПиши только по этим блокам. Не переноси факты из других подтем и лекций. Не добавляй термины, цифры, диагнозы и детали случаев, которых во фрагменте нет. `[неразборчиво]` не заполняй.\\n\\nЦель — не меньше 10 вопросов. Каждый — жизненная ситуация: человек и бытовой контекст, затем что из этого следует по лекции. Не спрашивай определение в лоб и не проси назвать термин.\\n\\nЧетыре коротких варианта, A–D, ровно один верный. Верный следует из фрагмента. Неверные — близкая путаница по этой же подтеме. Если фактов мало, меняй ситуации, не факты. Не повторяй один и тот же stem.\\n\\nК каждому варианту — одно короткое предложение: почему он сходится или расходится с лекцией. explanation — 2–4 предложения ученику, который ошибся. Новых фактов нет.\\n\\nterm_canonical — только из списка ТЕРМИНЫ. kind всегда \\\"life_mcq\\\". correct_choice — одна буква A, B, C или D.\\n\\nЕсли честно не набирается 10 вопросов без выдумки, верни сколько есть и \\\"shortfall\\\": true. Не выдумывай факты ради десятки.\\n\\nПеред ответом проверь: один верный, четыре пояснения на месте, нет факта вне фрагмента.\\n\\nОтвет — один JSON без Markdown:\\n\\n{\\\"subtopic_ordinal\\\":1,\\\"shortfall\\\":false,\\\"questions\\\":[{\\\"term_canonical\\\":\\\"...\\\",\\\"kind\\\":\\\"life_mcq\\\",\\\"stem\\\":\\\"...\\\",\\\"choice_a\\\":\\\"...\\\",\\\"choice_b\\\":\\\"...\\\",\\\"choice_c\\\":\\\"...\\\",\\\"choice_d\\\":\\\"...\\\",\\\"correct_choice\\\":\\\"A\\\",\\\"explanation\\\":\\\"...\\\",\\\"explanation_a\\\":\\\"...\\\",\\\"explanation_b\\\":\\\"...\\\",\\\"explanation_c\\\":\\\"...\\\",\\\"explanation_d\\\":\\\"...\\\"}]}\";\nconst cpt = C.chars_per_token || 2;\nconst est = (s) => Math.ceil(String(s || '').length / cpt);\n\nconst norm = (s) => String(s || '').toLowerCase().replace(/ё/g, 'е');\nfunction stems(phrase) {\n  return norm(phrase)\n    .split(/[^а-яa-z0-9]+/)\n    .filter((w) => w.length >= 4)\n    .map((w) => w.slice(0, Math.max(4, w.length - 2)));\n}\nfunction matcher(names) {\n  const sets = names.map(stems).filter((s) => s.length);\n  const plain = names.map(norm).filter((p) => p && p.length < 4);\n  return (text) => {\n    const t = norm(text);\n    if (sets.some((set) => set.every((s) => t.includes(s)))) return true;\n    return plain.some((p) => t.includes(p));\n  };\n}\n\nconst subTerms = T.terms.filter((t) => t.subtopic_ordinal === sub.ordinal && t.definition);\nconst base = {\n  lecture_id: L.lecture_id,\n  job_id: L.job_id,\n  course_id: L.course_id,\n  subtopic_id: sub.subtopic_id,\n  ordinal: sub.ordinal,\n  title: sub.title,\n  spent_month_usd: Number(sub.spent_month_usd) || 0,\n  spent_lecture_usd: Number(sub.spent_lecture_usd) || 0,\n  term_canonicals: subTerms.map((t) => t.canonical),\n  existing_stems: [],\n  step: 'questions',\n  prompt_version: C.prompt_versions.questions,\n};\nif (!subTerms.length) {\n  return [{ json: { ...base, skip: true, budget_exceeded: false, skip_reason: 'no_terms_with_definition' }, pairedItem: 0 }];\n}\n\n// --- konspekt fragment: sections that mention the subtopic's terms / title words\nconst konspekt = String(L.konspekt_md || '').trim();\nconst termNames = subTerms.flatMap((t) => [t.canonical].concat(t.aliases || []));\nconst termMatch = matcher(termNames);\nconst titleStems = stems(sub.title);\nconst sections = konspekt.split(/\\n(?=##\\s)/);\nconst scored = sections.map((text, idx) => {\n  const t = norm(text);\n  let score = subTerms.filter((st) => matcher([st.canonical].concat(st.aliases || []))(text)).length * 2;\n  score += titleStems.filter((s) => t.includes(s)).length;\n  return { idx, text, score };\n});\nlet picked = scored.filter((s) => s.score > 0).sort((a, b) => b.score - a.score).slice(0, 3).sort((a, b) => a.idx - b.idx);\nlet konspektFragment = picked.length ? picked.map((s) => s.text).join('\\n\\n') : konspekt;\nif (konspektFragment.length > 12000) konspektFragment = konspektFragment.slice(0, 12000);\n\n// --- transcript fragment: segments mentioning the terms (+/- 1 neighbour), capped\nlet segs = (Array.isArray(L.chunks) ? L.chunks : []).map((c) => String((c && c.text) || '').trim());\nif (!segs.filter(Boolean).length) {\n  const tr = String(L.transcript || '');\n  segs = [];\n  for (let i = 0; i < tr.length; i += 1000) segs.push(tr.slice(i, i + 1000));\n}\nconst hit = new Set();\nsegs.forEach((text, i) => {\n  if (text && termMatch(text)) {\n    hit.add(i);\n    if (i > 0) hit.add(i - 1);\n    if (i + 1 < segs.length) hit.add(i + 1);\n  }\n});\nconst order = Array.from(hit).sort((a, b) => a - b);\nconst parts = [];\nlet used = 0;\nfor (const i of order) {\n  const text = segs[i];\n  if (!text) continue;\n  if (used + text.length > C.questions_transcript_max_chars) break;\n  parts.push(text);\n  used += text.length + 1;\n}\nconst transcriptFragment = parts.length ? parts.join('\\n') : '[фрагмент не найден — опирайся только на конспект]';\n\nconst termsBlock = subTerms.map((t) => '- ' + t.canonical + ': ' + t.definition).join('\\n');\nconst user = [\n  'ПОДТЕМА\\n' + sub.ordinal + '. ' + sub.title,\n  'ТЕРМИНЫ\\n' + termsBlock,\n  'ФРАГМЕНТ КОНСПЕКТА\\n' + konspektFragment,\n  'ФРАГМЕНТ ТРАНСКРИПТА\\n' + transcriptFragment,\n].join('\\n\\n');\n\nconst P = C.prices_usd_per_1m;\nconst inTokens = est(SYSTEM) + est(user);\nconst projected = (inTokens * P.miss + C.est_output_tokens_questions * P.out) / 1e6;\nconst lectureCap = C.max_cost_usd_per_lecture;\nconst monthCap = C.monthly_budget_usd * C.budget_stop_ratio;\nlet reason = null;\nif (base.spent_lecture_usd + projected > lectureCap) {\n  reason = 'budget_exceeded: лимит на лекцию ' + lectureCap + ' USD перед подтемой ' + sub.ordinal\n    + ' (потрачено ' + base.spent_lecture_usd.toFixed(4) + ')';\n} else if (base.spent_month_usd + projected > monthCap) {\n  reason = 'budget_exceeded: 80% месячного бюджета ' + C.monthly_budget_usd + ' USD перед подтемой ' + sub.ordinal\n    + ' (потрачено ' + base.spent_month_usd.toFixed(4) + ')';\n}\nif (reason) {\n  return [{ json: { ...base, skip: false, budget_exceeded: true, error_message: reason }, pairedItem: 0 }];\n}\nreturn [{\n  json: {\n    ...base,\n    skip: false,\n    budget_exceeded: false,\n    est_input_tokens: inTokens,\n    user_base: user,\n    request_body: {\n      model: C.llm_model,\n      messages: [\n        { role: 'system', content: SYSTEM },\n        { role: 'user', content: user },\n      ],\n      thinking: C.thinking,\n      response_format: { type: 'json_object' },\n      max_tokens: C.max_output_tokens,\n      temperature: C.temperature_questions,\n      stream: false,\n    },\n  },\n  pairedItem: 0,\n}];"
+        "jsCode": "/**\n * Fragment picking + thin-subtopic merge for psy_05.\n * Pure helpers — used from n8n Code (embedded) and node:test.\n */\n\nconst DEFAULTS = {\n  konspektMaxChars: 5500,\n  transcriptMaxChars: 7000,\n  thinMinChars: 400,\n  titleTokenMinLen: 5,\n};\n\nfunction norm(s) {\n  return String(s || '')\n    .toLowerCase()\n    .replace(/ё/g, 'е');\n}\n\n/** Significant tokens from a title/phrase — no short 4-char stems. */\nfunction titleTokens(phrase, minLen = DEFAULTS.titleTokenMinLen) {\n  return norm(phrase)\n    .split(/[^а-яa-z0-9]+/)\n    .filter((w) => w.length >= minLen);\n}\n\nfunction sectionList(konspekt) {\n  const text = String(konspekt || '').trim();\n  if (!text) return [];\n  return text.split(/\\n(?=##\\s)/).map((s) => s.trim()).filter(Boolean);\n}\n\nfunction scoreSection(sectionText, title, terms) {\n  const t = norm(sectionText);\n  let score = 0;\n  const tokens = titleTokens(title);\n  for (const tok of tokens) {\n    if (t.includes(tok)) score += 3;\n  }\n  // Prefer heading that starts with the title words\n  const heading = (sectionText.split('\\n')[0] || '');\n  const h = norm(heading);\n  if (tokens.length && tokens.every((tok) => h.includes(tok))) score += 8;\n  for (const term of terms || []) {\n    const names = [term.canonical].concat(term.aliases || []).map(norm).filter(Boolean);\n    for (const name of names) {\n      if (name.length >= 4 && t.includes(name)) score += 2;\n    }\n  }\n  return score;\n}\n\n/**\n * Pick konspekt fragment for one subtopic: best matching ## section ± neighbour,\n * capped. Never falls back to the whole konspekt.\n */\nfunction pickKonspektFragment(konspekt, title, terms, maxChars = DEFAULTS.konspektMaxChars) {\n  const sections = sectionList(konspekt);\n  if (!sections.length) {\n    return { text: '', matched: false, score: 0 };\n  }\n  const scored = sections.map((text, idx) => ({\n    idx,\n    text,\n    score: scoreSection(text, title, terms),\n  }));\n  scored.sort((a, b) => b.score - a.score || a.idx - b.idx);\n  const best = scored[0];\n  if (!best || best.score <= 0) {\n    // No match: take a short window around the ordinal-ish position, not the whole doc.\n    const approx = Math.min(\n      sections.length - 1,\n      Math.max(0, Math.floor(sections.length / 2)),\n    );\n    const window = [sections[approx]];\n    if (approx > 0) window.unshift(sections[approx - 1]);\n    if (approx + 1 < sections.length) window.push(sections[approx + 1]);\n    let text = window.join('\\n\\n');\n    if (text.length > maxChars) text = text.slice(0, maxChars);\n    return { text, matched: false, score: 0 };\n  }\n  const idxs = new Set([best.idx]);\n  if (best.idx > 0) idxs.add(best.idx - 1);\n  if (best.idx + 1 < sections.length) idxs.add(best.idx + 1);\n  let text = Array.from(idxs)\n    .sort((a, b) => a - b)\n    .map((i) => sections[i])\n    .join('\\n\\n');\n  if (text.length > maxChars) {\n    // Prefer keeping the best section fully, then trim.\n    const primary = sections[best.idx];\n    if (primary.length >= maxChars) {\n      text = primary.slice(0, maxChars);\n    } else {\n      text = text.slice(0, maxChars);\n    }\n  }\n  return { text, matched: true, score: best.score };\n}\n\nfunction textMatches(haystack, title, terms) {\n  const t = norm(haystack);\n  if (!t) return false;\n  const tokens = titleTokens(title);\n  if (tokens.length && tokens.every((tok) => t.includes(tok))) return true;\n  if (tokens.some((tok) => t.includes(tok))) return true;\n  for (const term of terms || []) {\n    const names = [term.canonical].concat(term.aliases || []).map(norm).filter(Boolean);\n    for (const name of names) {\n      if (name.length >= 5 && t.includes(name)) return true;\n    }\n  }\n  return false;\n}\n\n/**\n * Transcript: only matching segments ±1 neighbour, capped.\n */\nfunction pickTranscriptFragment(chunks, title, terms, maxChars = DEFAULTS.transcriptMaxChars) {\n  let segs = (Array.isArray(chunks) ? chunks : [])\n    .map((c) => String((c && c.text) || '').trim())\n    .filter(Boolean);\n  if (!segs.length) {\n    return { text: '', matched: false };\n  }\n  const hit = new Set();\n  segs.forEach((text, i) => {\n    if (textMatches(text, title, terms)) {\n      hit.add(i);\n      if (i > 0) hit.add(i - 1);\n      if (i + 1 < segs.length) hit.add(i + 1);\n    }\n  });\n  const order = Array.from(hit).sort((a, b) => a - b);\n  const parts = [];\n  let used = 0;\n  for (const i of order) {\n    const text = segs[i];\n    if (!text) continue;\n    if (used + text.length > maxChars) break;\n    parts.push(text);\n    used += text.length + 1;\n  }\n  return {\n    text: parts.length ? parts.join('\\n') : '',\n    matched: parts.length > 0,\n  };\n}\n\nfunction termsForOrdinal(terms, ordinal) {\n  return (terms || []).filter((t) => Number(t.subtopic_ordinal) === Number(ordinal));\n}\n\nfunction termsWithDefinition(terms) {\n  return (terms || []).filter((t) => t && t.definition != null && String(t.definition).trim() !== '');\n}\n\n/**\n * Resolve term list for MCQ: prefer subtopic terms with definition;\n * else fall back to any lecture terms with definition (never empty skip).\n */\nfunction resolveTermsForSubtopic(ordinal, allTerms) {\n  const own = termsWithDefinition(termsForOrdinal(allTerms, ordinal));\n  if (own.length) {\n    return { terms: own, fallback: false };\n  }\n  const lecture = termsWithDefinition(allTerms);\n  return { terms: lecture, fallback: lecture.length > 0 };\n}\n\n/**\n * Merge subtopics whose konspekt fragment is thinner than thinMinChars into a neighbour.\n * Re-numbers ordinals 1..N and remaps term.subtopic_ordinal.\n */\nfunction mergeThinSubtopics(subtopics, terms, konspekt, opts = {}) {\n  const thinMin = opts.thinMinChars != null ? opts.thinMinChars : DEFAULTS.thinMinChars;\n  const konspektMax = opts.konspektMaxChars != null ? opts.konspektMaxChars : DEFAULTS.konspektMaxChars;\n  let list = (subtopics || [])\n    .map((s) => ({ ordinal: Number(s.ordinal), title: String(s.title || '').trim() }))\n    .filter((s) => s.ordinal >= 1 && s.title)\n    .sort((a, b) => a.ordinal - b.ordinal);\n\n  if (list.length <= 1) {\n    return { subtopics: list, terms: (terms || []).slice(), merges: [] };\n  }\n\n  const merges = [];\n  let changed = true;\n  while (changed && list.length > 1) {\n    changed = false;\n    for (let i = 0; i < list.length; i++) {\n      const sub = list[i];\n      const ownTerms = termsForOrdinal(terms, sub.ordinal);\n      // Thinness = primary matched ## section alone (neighbours do not inflate).\n      const sections = sectionList(konspekt);\n      const scored = sections.map((text, idx) => ({\n        idx,\n        text,\n        score: scoreSection(text, sub.title, ownTerms),\n      }));\n      scored.sort((a, b) => b.score - a.score || a.idx - b.idx);\n      const primary = scored[0] && scored[0].score > 0 ? scored[0].text : '';\n      const primaryChars = primary.length;\n      if (primaryChars >= thinMin) continue;\n      // Merge into neighbour with more primary content (prefer previous, else next).\n      let targetIdx = i > 0 ? i - 1 : i + 1;\n      if (i > 0 && i + 1 < list.length) {\n        const prevOwn = termsForOrdinal(terms, list[i - 1].ordinal);\n        const nextOwn = termsForOrdinal(terms, list[i + 1].ordinal);\n        const prevPrimary = sections\n          .map((text) => ({ text, score: scoreSection(text, list[i - 1].title, prevOwn) }))\n          .sort((a, b) => b.score - a.score)[0];\n        const nextPrimary = sections\n          .map((text) => ({ text, score: scoreSection(text, list[i + 1].title, nextOwn) }))\n          .sort((a, b) => b.score - a.score)[0];\n        const prevLen = prevPrimary && prevPrimary.score > 0 ? prevPrimary.text.length : 0;\n        const nextLen = nextPrimary && nextPrimary.score > 0 ? nextPrimary.text.length : 0;\n        targetIdx = nextLen > prevLen ? i + 1 : i - 1;\n      }\n      const target = list[targetIdx];\n      merges.push({\n        from_ordinal: sub.ordinal,\n        from_title: sub.title,\n        into_ordinal: target.ordinal,\n        into_title: target.title,\n        fragment_chars: primaryChars,\n      });\n      target.title = target.title + ' / ' + sub.title;\n      const fromOrd = sub.ordinal;\n      const intoOrd = target.ordinal;\n      terms = (terms || []).map((t) => {\n        if (Number(t.subtopic_ordinal) === fromOrd) {\n          return { ...t, subtopic_ordinal: intoOrd };\n        }\n        return t;\n      });\n      list.splice(i, 1);\n      changed = true;\n      break;\n    }\n  }\n\n  // Re-number ordinals densely and remap terms.\n  const ordMap = new Map();\n  list = list.map((s, idx) => {\n    const neu = idx + 1;\n    ordMap.set(s.ordinal, neu);\n    return { ordinal: neu, title: s.title };\n  });\n  const remappedTerms = (terms || []).map((t) => {\n    const old = Number(t.subtopic_ordinal);\n    const neu = ordMap.has(old) ? ordMap.get(old) : old;\n    return { ...t, subtopic_ordinal: neu };\n  });\n\n  return { subtopics: list, terms: remappedTerms, merges };\n}\n\n/**\n * Build the questions-request payload fields (no LLM). Never skips for missing subtopic terms.\n */\nfunction buildQuestionsRequestParts(input) {\n  const {\n    subtopic,\n    allTerms,\n    konspektMd,\n    chunks,\n    constants = {},\n  } = input;\n  const konspektMax = constants.questions_konspekt_max_chars || DEFAULTS.konspektMaxChars;\n  const transcriptMax = constants.questions_transcript_max_chars || DEFAULTS.transcriptMaxChars;\n\n  const resolved = resolveTermsForSubtopic(subtopic.ordinal, allTerms);\n  const termCanonicals = resolved.terms.map((t) => t.canonical);\n  const konspektFrag = pickKonspektFragment(\n    konspektMd,\n    subtopic.title,\n    resolved.terms,\n    konspektMax,\n  );\n  const transcriptFrag = pickTranscriptFragment(\n    chunks,\n    subtopic.title,\n    resolved.terms,\n    transcriptMax,\n  );\n\n  const termsBlock = resolved.terms.length\n    ? resolved.terms.map((t) => '- ' + t.canonical + ': ' + t.definition).join('\\n')\n    : '- (нет терминов с определением — опирайся только на фрагмент конспекта; term_canonical не выдумывай)';\n\n  const transcriptText = transcriptFrag.text\n    || '[фрагмент не найден — опирайся только на конспект]';\n\n  const user = [\n    'ПОДТЕМА\\n' + subtopic.ordinal + '. ' + subtopic.title,\n    'ТЕРМИНЫ\\n' + termsBlock,\n    'ФРАГМЕНТ КОНСПЕКТА\\n' + konspektFrag.text,\n    'ФРАГМЕНТ ТРАНСКРИПТА\\n' + transcriptText,\n  ].join('\\n\\n');\n\n  return {\n    skip: false,\n    skip_reason: null,\n    terms_fallback: resolved.fallback,\n    term_canonicals: termCanonicals,\n    konspekt_fragment: konspektFrag.text,\n    konspekt_matched: konspektFrag.matched,\n    transcript_fragment: transcriptText,\n    transcript_matched: transcriptFrag.matched,\n    user_base: user,\n  };\n}\nconst C = $('Run — Init Constants').first().json.constants;\nconst L = $('Load — Lecture').first().json;\nconst T = $('LLM — Merge Thin Subtopics').item.json;\nconst spend = items[0].json;\nconst loopSub = $('Run — Loop Subtopics').item.json;\nconst runIndex = typeof $runIndex === 'number' ? $runIndex : 0;\nconst sub = {\n  ...loopSub,\n  ...spend,\n  subtopic_id: spend.subtopic_id || loopSub.subtopic_id || loopSub.id,\n  ordinal: Number(spend.ordinal != null ? spend.ordinal : loopSub.ordinal),\n  title: spend.title || loopSub.title,\n};\nconst SYSTEM = \"Ты пишешь вопросы с выбором ответа по одной подтеме одной лекции. Сразу JSON, без рассуждений вслух.\\n\\nВход — одна подтема:\\nПОДТЕМА — ordinal и title\\nТЕРМИНЫ — canonical и definition (сначала термины этой подтемы; если их нет — fallback-термины той же лекции с определением)\\nФРАГМЕНТ КОНСПЕКТА\\nФРАГМЕНТ ТРАНСКРИПТА\\nОПЦИОНАЛЬНО: ОШИБКИ_ВАЛИДАЦИИ или ДОБОР — короткий список, что исправить или сколько вопросов не хватает\\n\\nПиши только по этим блокам. Не переноси факты из других подтем и лекций. Не добавляй термины, цифры, диагнозы и детали случаев, которых во фрагменте нет. `[неразборчиво]` не заполняй.\\n\\nЦель — не меньше 10 вопросов. Каждый — жизненная ситуация: человек и бытовой контекст, затем что из этого следует по лекции. Не спрашивай определение в лоб и не проси назвать термин. Даже если ТЕРМИНЫ — fallback с другой подтемы лекции, факты бери только из ФРАГМЕНТ КОНСПЕКТА / ТРАНСКРИПТА этой подтемы.\\n\\nЧетыре коротких варианта, A–D, ровно один верный. Верный следует из фрагмента. Неверные — близкая путаница по этой же подтеме. Если фактов мало, меняй ситуации, не факты. Не повторяй один и тот же stem.\\n\\nК каждому варианту — одно короткое предложение: почему он сходится или расходится с лекцией. explanation — 2–4 предложения ученику, который ошибся. Новых фактов нет.\\n\\nterm_canonical — только из списка ТЕРМИНЫ (не выдумывай). kind всегда \\\"life_mcq\\\". correct_choice — одна буква A, B, C или D.\\n\\nЕсли честно не набирается 10 вопросов без выдумки, верни сколько есть и \\\"shortfall\\\": true. Не выдумывай факты ради десятки.\\n\\nПеред ответом проверь: один верный, четыре пояснения на месте, нет факта вне фрагмента.\\n\\nОтвет — один JSON без Markdown:\\n\\n{\\\"subtopic_ordinal\\\":1,\\\"shortfall\\\":false,\\\"questions\\\":[{\\\"term_canonical\\\":\\\"...\\\",\\\"kind\\\":\\\"life_mcq\\\",\\\"stem\\\":\\\"...\\\",\\\"choice_a\\\":\\\"...\\\",\\\"choice_b\\\":\\\"...\\\",\\\"choice_c\\\":\\\"...\\\",\\\"choice_d\\\":\\\"...\\\",\\\"correct_choice\\\":\\\"A\\\",\\\"explanation\\\":\\\"...\\\",\\\"explanation_a\\\":\\\"...\\\",\\\"explanation_b\\\":\\\"...\\\",\\\"explanation_c\\\":\\\"...\\\",\\\"explanation_d\\\":\\\"...\\\"}]}\";\nconst cpt = C.chars_per_token || 2;\nconst est = (s) => Math.ceil(String(s || '').length / cpt);\n\nconst parts = buildQuestionsRequestParts({\n  subtopic: { ordinal: sub.ordinal, title: sub.title },\n  allTerms: T.terms || [],\n  konspektMd: L.konspekt_md,\n  chunks: L.chunks,\n  constants: C,\n});\n\nconst base = {\n  ...spend,\n  lecture_id: L.lecture_id,\n  job_id: L.job_id,\n  course_id: L.course_id,\n  subtopic_id: sub.subtopic_id,\n  ordinal: sub.ordinal,\n  title: sub.title,\n  spent_month_usd: Number(spend.spent_month_usd) || 0,\n  spent_lecture_usd: Number(spend.spent_lecture_usd) || 0,\n  term_canonicals: parts.term_canonicals,\n  terms_fallback: parts.terms_fallback,\n  existing_stems: [],\n  step: 'questions',\n  prompt_version: C.prompt_versions.questions,\n  loop_run_index: runIndex,\n  skip: false,\n  skip_reason: null,\n};\n\nconst user = parts.user_base;\nconst P = C.prices_usd_per_1m;\nconst inTokens = est(SYSTEM) + est(user);\nconst projected = (inTokens * P.miss + C.est_output_tokens_questions * P.out) / 1e6;\nconst lectureCap = C.max_cost_usd_per_lecture;\nconst monthCap = C.monthly_budget_usd * C.budget_stop_ratio;\nlet reason = null;\nif (base.spent_lecture_usd + projected > lectureCap) {\n  reason = 'budget_exceeded: лимит на лекцию ' + lectureCap + ' USD перед подтемой ' + sub.ordinal\n    + ' (потрачено ' + base.spent_lecture_usd.toFixed(4) + ')';\n} else if (base.spent_month_usd + projected > monthCap) {\n  reason = 'budget_exceeded: 80% месячного бюджета ' + C.monthly_budget_usd + ' USD перед подтемой ' + sub.ordinal\n    + ' (потрачено ' + base.spent_month_usd.toFixed(4) + ')';\n}\nif (reason) {\n  return [{ json: { ...base, budget_exceeded: true, error_message: reason }, pairedItem: 0 }];\n}\nreturn [{\n  json: {\n    ...base,\n    budget_exceeded: false,\n    est_input_tokens: inTokens,\n    user_base: user,\n    konspekt_fragment_chars: (parts.konspekt_fragment || '').length,\n    request_body: {\n      model: C.llm_model,\n      messages: [\n        { role: 'system', content: SYSTEM },\n        { role: 'user', content: user },\n      ],\n      thinking: C.thinking,\n      response_format: { type: 'json_object' },\n      max_tokens: C.max_output_tokens,\n      temperature: C.temperature_questions,\n      stream: false,\n    },\n  },\n  pairedItem: 0,\n}];"
       }
     },
     {
-      "id": "61325311-3feb-4b2e-aba4-5fa6fe0e4118",
+      "id": "9126ac1a-8d6f-4e5a-b809-611e3fab646d",
       "name": "LLM — Budget OK Questions",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        4400,
-        220
-      ],
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "loose"
-          },
-          "conditions": [
-            {
-              "id": "610f3bc6-67f9-44fb-88bf-0e0c7707e9bc",
-              "leftValue": "={{ String($json.budget_exceeded) }}",
-              "rightValue": "false",
-              "operator": {
-                "type": "string",
-                "operation": "equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        }
-      }
-    },
-    {
-      "id": "7719333e-834a-42ed-a5a4-8440b58c0252",
-      "name": "LLM — Has Terms",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
@@ -563,7 +545,38 @@
           },
           "conditions": [
             {
-              "id": "aaeef0d0-b70b-43c3-9aa3-9c53423cccd0",
+              "id": "31226bea-dafa-4349-af24-482cc7b88c32",
+              "leftValue": "={{ String($json.budget_exceeded) }}",
+              "rightValue": "false",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "2488dc35-813f-4c62-8a6a-ffa419c3e11c",
+      "name": "LLM — Has Terms",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4840,
+        220
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "af59e06e-e25a-4d56-bc5b-c0d28acf3a71",
               "leftValue": "={{ String($json.skip) }}",
               "rightValue": "false",
               "operator": {
@@ -577,12 +590,12 @@
       }
     },
     {
-      "id": "34ac8fc9-0747-42f6-8d07-6eb22d30c0ab",
+      "id": "8884de6d-4f3a-4524-9fc8-83d8360954a1",
       "name": "Shared — DeepSeek Questions",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.5,
       "position": [
-        4840,
+        5060,
         140
       ],
       "parameters": {
@@ -607,25 +620,25 @@
       "onError": "continueErrorOutput"
     },
     {
-      "id": "87eba03a-adeb-46a0-aa1d-9877f9852b9e",
+      "id": "3c48b7cf-ebdd-4a91-b44c-9b41f2c8e819",
       "name": "LLM — Parse Questions",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        5060,
+        5280,
         140
       ],
       "parameters": {
-        "jsCode": "const C = $('Run — Init Constants').first().json.constants;\nconst b = $('LLM — Build Questions Request').first().json;\nfunction parseDeepSeek(resp, C, src, step, promptVersion) {\n  const r = resp || {};\n  const choice = (r.choices && r.choices[0]) || {};\n  const content = String((choice.message && choice.message.content) || '');\n  const u = r.usage || {};\n  const hit = Number(u.prompt_cache_hit_tokens != null\n    ? u.prompt_cache_hit_tokens\n    : ((u.prompt_tokens_details && u.prompt_tokens_details.cached_tokens) || 0)) || 0;\n  let miss = u.prompt_cache_miss_tokens != null ? Number(u.prompt_cache_miss_tokens) : null;\n  const promptTokens = Number(u.prompt_tokens != null ? u.prompt_tokens : ((miss || 0) + hit)) || 0;\n  if (miss == null || !Number.isFinite(miss)) miss = Math.max(promptTokens - hit, 0);\n  const completion = Number(u.completion_tokens) || 0;\n  const P = C.prices_usd_per_1m;\n  const costExact = (miss * P.miss + hit * P.hit + completion * P.out) / 1e6;\n  return {\n    content,\n    finish_reason: choice.finish_reason || null,\n    cost_exact: costExact,\n    usage_row: {\n      lecture_id: src.lecture_id,\n      job_id: src.job_id,\n      workflow_name: C.workflow_name,\n      workflow_version: C.workflow_version,\n      model: r.model || C.llm_model,\n      prompt_tokens: promptTokens,\n      completion_tokens: completion,\n      cost_usd: Number(costExact.toFixed(6)),\n      prompt_version: promptVersion,\n      prompt_cache_hit_tokens: hit,\n      step,\n    },\n  };\n}\n/**\n * Validate gen_questions_v2 JSON for one subtopic.\n * Pure function — no I/O. Used from n8n Code node and node:test.\n */\n\nfunction normalizeChoice(text) {\n  return String(text || '')\n    .toLowerCase()\n    .replace(/[\\s\\u00a0]+/g, ' ')\n    .replace(/[.,;:!?…]+$/g, '')\n    .trim();\n}\n\nfunction normalizeStem(text) {\n  return normalizeChoice(text);\n}\n\n/**\n * @param {unknown} raw parsed JSON (object) or string\n * @param {{ termCanonicals: string[], existingStems?: string[] }} ctx\n * @returns {{ ok: boolean, errors: string[], data?: object, validQuestions?: object[] }}\n */\nfunction validateQuestionsPayload(raw, ctx) {\n  const errors = [];\n  const termSet = new Set((ctx.termCanonicals || []).map((t) => String(t)));\n  const existingStems = new Set((ctx.existingStems || []).map(normalizeStem));\n\n  let data = raw;\n  if (typeof raw === 'string') {\n    try {\n      data = JSON.parse(raw);\n    } catch {\n      return { ok: false, errors: ['invalid_json'] };\n    }\n  }\n\n  if (!data || typeof data !== 'object' || Array.isArray(data)) {\n    return { ok: false, errors: ['not_object'] };\n  }\n\n  const allowedTop = new Set(['subtopic_ordinal', 'shortfall', 'questions']);\n  for (const key of Object.keys(data)) {\n    if (!allowedTop.has(key)) errors.push(`extra_field:${key}`);\n  }\n\n  if (typeof data.subtopic_ordinal !== 'number' || data.subtopic_ordinal < 1) {\n    errors.push('bad_subtopic_ordinal');\n  }\n  if (typeof data.shortfall !== 'boolean') {\n    errors.push('bad_shortfall');\n  }\n  if (!Array.isArray(data.questions)) {\n    errors.push('questions_not_array');\n    return { ok: false, errors };\n  }\n\n  const allowedQ = new Set([\n    'term_canonical',\n    'kind',\n    'stem',\n    'choice_a',\n    'choice_b',\n    'choice_c',\n    'choice_d',\n    'correct_choice',\n    'explanation',\n    'explanation_a',\n    'explanation_b',\n    'explanation_c',\n    'explanation_d',\n  ]);\n\n  const stemsInBatch = new Set();\n  const validQuestions = [];\n\n  data.questions.forEach((q, idx) => {\n    const prefix = `q${idx}`;\n    if (!q || typeof q !== 'object' || Array.isArray(q)) {\n      errors.push(`${prefix}:not_object`);\n      return;\n    }\n    for (const key of Object.keys(q)) {\n      if (!allowedQ.has(key)) errors.push(`${prefix}:extra_field:${key}`);\n    }\n\n    const required = [...allowedQ];\n    for (const key of required) {\n      if (q[key] === undefined || q[key] === null || q[key] === '') {\n        errors.push(`${prefix}:missing:${key}`);\n      }\n    }\n\n    if (q.kind !== 'life_mcq') errors.push(`${prefix}:bad_kind`);\n    if (!['A', 'B', 'C', 'D'].includes(q.correct_choice)) {\n      errors.push(`${prefix}:bad_correct_choice`);\n    }\n    if (!termSet.has(String(q.term_canonical || ''))) {\n      errors.push(`${prefix}:unknown_term:${q.term_canonical}`);\n    }\n\n    const choices = [q.choice_a, q.choice_b, q.choice_c, q.choice_d].map(normalizeChoice);\n    if (choices.some((c) => !c)) errors.push(`${prefix}:empty_choice`);\n    if (new Set(choices).size !== 4) errors.push(`${prefix}:duplicate_choices`);\n\n    const correctIdx = { A: 0, B: 1, C: 2, D: 3 }[q.correct_choice];\n    if (correctIdx != null) {\n      const correctText = choices[correctIdx];\n      choices.forEach((c, i) => {\n        if (i !== correctIdx && c === correctText) {\n          errors.push(`${prefix}:correct_duplicated_in_other`);\n        }\n      });\n    }\n\n    for (const letter of ['a', 'b', 'c', 'd']) {\n      if (!String(q[`explanation_${letter}`] || '').trim()) {\n        errors.push(`${prefix}:missing_explanation_${letter}`);\n      }\n    }\n    if (!String(q.explanation || '').trim()) errors.push(`${prefix}:missing_explanation`);\n\n    const stemNorm = normalizeStem(q.stem);\n    if (!stemNorm) errors.push(`${prefix}:empty_stem`);\n    if (stemsInBatch.has(stemNorm) || existingStems.has(stemNorm)) {\n      errors.push(`${prefix}:duplicate_stem`);\n    }\n    stemsInBatch.add(stemNorm);\n\n    const qErrors = errors.filter((e) => e.startsWith(`${prefix}:`));\n    if (qErrors.length === 0) validQuestions.push(q);\n  });\n\n  if (data.questions.length < 10) {\n    errors.push('lt_10_questions');\n  }\n  if (data.shortfall === true) {\n    errors.push('shortfall_true');\n  }\n\n  const hardFail = errors.some(\n    (e) =>\n      e === 'invalid_json' ||\n      e === 'not_object' ||\n      e === 'questions_not_array' ||\n      e.startsWith('extra_field:') ||\n      e === 'bad_subtopic_ordinal' ||\n      e === 'bad_shortfall',\n  );\n\n  // Schema/JSON hard errors → not ok. Soft: lt_10 / shortfall / per-question → ok=false but validQuestions kept.\n  const ok =\n    !hardFail &&\n    errors.filter((e) => e !== 'lt_10_questions' && e !== 'shortfall_true' && !e.startsWith('q')).length === 0 &&\n    validQuestions.length === data.questions.length &&\n    data.questions.length >= 10 &&\n    data.shortfall === false;\n\n  return {\n    ok,\n    errors,\n    data,\n    validQuestions,\n    shortfall: data.shortfall === true || validQuestions.length < 10,\n  };\n}\n\nfunction parseJson(text) {\n  let t = String(text || '').trim();\n  const m = t.match(/^```(?:json)?\\s*([\\s\\S]*?)\\s*```$/);\n  if (m) t = m[1];\n  try {\n    return { value: JSON.parse(t) };\n  } catch (e) {\n    const a = t.indexOf('{');\n    const z = t.lastIndexOf('}');\n    if (a >= 0 && z > a) {\n      try {\n        return { value: JSON.parse(t.slice(a, z + 1)) };\n      } catch (e2) {\n        /* fall through */\n      }\n    }\n    return { error: 'invalid_json' };\n  }\n}\n\nconst p = parseDeepSeek(items[0].json, C, b, 'questions', C.prompt_versions.questions);\nlet validation;\nif (!p.content.trim()) {\n  validation = { ok: false, errors: ['invalid_json', 'llm_empty_response'], validQuestions: [] };\n} else {\n  const pj = parseJson(p.content);\n  if (pj.error) {\n    validation = {\n      ok: false,\n      errors: ['invalid_json'].concat(p.finish_reason === 'length' ? ['llm_truncated'] : []),\n      validQuestions: [],\n    };\n  } else {\n    validation = validateQuestionsPayload(pj.value, {\n      termCanonicals: b.term_canonicals,\n      existingStems: b.existing_stems || [],\n    });\n  }\n}\nreturn [{\n  json: {\n    usage_row: p.usage_row,\n    cost_exact: p.cost_exact,\n    finish_reason: p.finish_reason,\n    validation_ok: Boolean(validation.ok),\n    errors: validation.errors || [],\n    valid_questions: validation.validQuestions || [],\n  },\n  pairedItem: 0,\n}];"
+        "jsCode": "const C = $('Run — Init Constants').first().json.constants;\nconst b = $('LLM — Build Questions Request').item.json;\nfunction parseDeepSeek(resp, C, src, step, promptVersion) {\n  const r = resp || {};\n  const choice = (r.choices && r.choices[0]) || {};\n  const content = String((choice.message && choice.message.content) || '');\n  const u = r.usage || {};\n  const hit = Number(u.prompt_cache_hit_tokens != null\n    ? u.prompt_cache_hit_tokens\n    : ((u.prompt_tokens_details && u.prompt_tokens_details.cached_tokens) || 0)) || 0;\n  let miss = u.prompt_cache_miss_tokens != null ? Number(u.prompt_cache_miss_tokens) : null;\n  const promptTokens = Number(u.prompt_tokens != null ? u.prompt_tokens : ((miss || 0) + hit)) || 0;\n  if (miss == null || !Number.isFinite(miss)) miss = Math.max(promptTokens - hit, 0);\n  const completion = Number(u.completion_tokens) || 0;\n  const P = C.prices_usd_per_1m;\n  const costExact = (miss * P.miss + hit * P.hit + completion * P.out) / 1e6;\n  return {\n    content,\n    finish_reason: choice.finish_reason || null,\n    cost_exact: costExact,\n    usage_row: {\n      lecture_id: src.lecture_id,\n      job_id: src.job_id,\n      workflow_name: C.workflow_name,\n      workflow_version: C.workflow_version,\n      model: r.model || C.llm_model,\n      prompt_tokens: promptTokens,\n      completion_tokens: completion,\n      cost_usd: Number(costExact.toFixed(6)),\n      prompt_version: promptVersion,\n      prompt_cache_hit_tokens: hit,\n      step,\n    },\n  };\n}\n/**\n * Validate gen_questions_v2 JSON for one subtopic.\n * Pure function — no I/O. Used from n8n Code node and node:test.\n */\n\nfunction normalizeChoice(text) {\n  return String(text || '')\n    .toLowerCase()\n    .replace(/[\\s\\u00a0]+/g, ' ')\n    .replace(/[.,;:!?…]+$/g, '')\n    .trim();\n}\n\nfunction normalizeStem(text) {\n  return normalizeChoice(text);\n}\n\n/**\n * @param {unknown} raw parsed JSON (object) or string\n * @param {{ termCanonicals: string[], existingStems?: string[] }} ctx\n * @returns {{ ok: boolean, errors: string[], data?: object, validQuestions?: object[] }}\n */\nfunction validateQuestionsPayload(raw, ctx) {\n  const errors = [];\n  const termSet = new Set((ctx.termCanonicals || []).map((t) => String(t)));\n  const existingStems = new Set((ctx.existingStems || []).map(normalizeStem));\n\n  let data = raw;\n  if (typeof raw === 'string') {\n    try {\n      data = JSON.parse(raw);\n    } catch {\n      return { ok: false, errors: ['invalid_json'] };\n    }\n  }\n\n  if (!data || typeof data !== 'object' || Array.isArray(data)) {\n    return { ok: false, errors: ['not_object'] };\n  }\n\n  const allowedTop = new Set(['subtopic_ordinal', 'shortfall', 'questions']);\n  for (const key of Object.keys(data)) {\n    if (!allowedTop.has(key)) errors.push(`extra_field:${key}`);\n  }\n\n  if (typeof data.subtopic_ordinal !== 'number' || data.subtopic_ordinal < 1) {\n    errors.push('bad_subtopic_ordinal');\n  }\n  if (typeof data.shortfall !== 'boolean') {\n    errors.push('bad_shortfall');\n  }\n  if (!Array.isArray(data.questions)) {\n    errors.push('questions_not_array');\n    return { ok: false, errors };\n  }\n\n  const allowedQ = new Set([\n    'term_canonical',\n    'kind',\n    'stem',\n    'choice_a',\n    'choice_b',\n    'choice_c',\n    'choice_d',\n    'correct_choice',\n    'explanation',\n    'explanation_a',\n    'explanation_b',\n    'explanation_c',\n    'explanation_d',\n  ]);\n\n  const stemsInBatch = new Set();\n  const validQuestions = [];\n\n  data.questions.forEach((q, idx) => {\n    const prefix = `q${idx}`;\n    if (!q || typeof q !== 'object' || Array.isArray(q)) {\n      errors.push(`${prefix}:not_object`);\n      return;\n    }\n    for (const key of Object.keys(q)) {\n      if (!allowedQ.has(key)) errors.push(`${prefix}:extra_field:${key}`);\n    }\n\n    const required = [...allowedQ];\n    for (const key of required) {\n      if (q[key] === undefined || q[key] === null || q[key] === '') {\n        errors.push(`${prefix}:missing:${key}`);\n      }\n    }\n\n    if (q.kind !== 'life_mcq') errors.push(`${prefix}:bad_kind`);\n    if (!['A', 'B', 'C', 'D'].includes(q.correct_choice)) {\n      errors.push(`${prefix}:bad_correct_choice`);\n    }\n    if (!termSet.has(String(q.term_canonical || ''))) {\n      errors.push(`${prefix}:unknown_term:${q.term_canonical}`);\n    }\n\n    const choices = [q.choice_a, q.choice_b, q.choice_c, q.choice_d].map(normalizeChoice);\n    if (choices.some((c) => !c)) errors.push(`${prefix}:empty_choice`);\n    if (new Set(choices).size !== 4) errors.push(`${prefix}:duplicate_choices`);\n\n    const correctIdx = { A: 0, B: 1, C: 2, D: 3 }[q.correct_choice];\n    if (correctIdx != null) {\n      const correctText = choices[correctIdx];\n      choices.forEach((c, i) => {\n        if (i !== correctIdx && c === correctText) {\n          errors.push(`${prefix}:correct_duplicated_in_other`);\n        }\n      });\n    }\n\n    for (const letter of ['a', 'b', 'c', 'd']) {\n      if (!String(q[`explanation_${letter}`] || '').trim()) {\n        errors.push(`${prefix}:missing_explanation_${letter}`);\n      }\n    }\n    if (!String(q.explanation || '').trim()) errors.push(`${prefix}:missing_explanation`);\n\n    const stemNorm = normalizeStem(q.stem);\n    if (!stemNorm) errors.push(`${prefix}:empty_stem`);\n    if (stemsInBatch.has(stemNorm) || existingStems.has(stemNorm)) {\n      errors.push(`${prefix}:duplicate_stem`);\n    }\n    stemsInBatch.add(stemNorm);\n\n    const qErrors = errors.filter((e) => e.startsWith(`${prefix}:`));\n    if (qErrors.length === 0) validQuestions.push(q);\n  });\n\n  if (data.questions.length < 10) {\n    errors.push('lt_10_questions');\n  }\n  if (data.shortfall === true) {\n    errors.push('shortfall_true');\n  }\n\n  const hardFail = errors.some(\n    (e) =>\n      e === 'invalid_json' ||\n      e === 'not_object' ||\n      e === 'questions_not_array' ||\n      e.startsWith('extra_field:') ||\n      e === 'bad_subtopic_ordinal' ||\n      e === 'bad_shortfall',\n  );\n\n  // Schema/JSON hard errors → not ok. Soft: lt_10 / shortfall / per-question → ok=false but validQuestions kept.\n  const ok =\n    !hardFail &&\n    errors.filter((e) => e !== 'lt_10_questions' && e !== 'shortfall_true' && !e.startsWith('q')).length === 0 &&\n    validQuestions.length === data.questions.length &&\n    data.questions.length >= 10 &&\n    data.shortfall === false;\n\n  return {\n    ok,\n    errors,\n    data,\n    validQuestions,\n    shortfall: data.shortfall === true || validQuestions.length < 10,\n  };\n}\n\nfunction parseJson(text) {\n  let t = String(text || '').trim();\n  const m = t.match(/^```(?:json)?\\s*([\\s\\S]*?)\\s*```$/);\n  if (m) t = m[1];\n  try {\n    return { value: JSON.parse(t) };\n  } catch (e) {\n    const a = t.indexOf('{');\n    const z = t.lastIndexOf('}');\n    if (a >= 0 && z > a) {\n      try {\n        return { value: JSON.parse(t.slice(a, z + 1)) };\n      } catch (e2) {\n        /* fall through */\n      }\n    }\n    return { error: 'invalid_json' };\n  }\n}\n\nconst p = parseDeepSeek(items[0].json, C, b, 'questions', C.prompt_versions.questions);\nlet validation;\nif (!p.content.trim()) {\n  validation = { ok: false, errors: ['invalid_json', 'llm_empty_response'], validQuestions: [] };\n} else {\n  const pj = parseJson(p.content);\n  if (pj.error) {\n    validation = {\n      ok: false,\n      errors: ['invalid_json'].concat(p.finish_reason === 'length' ? ['llm_truncated'] : []),\n      validQuestions: [],\n    };\n  } else {\n    validation = validateQuestionsPayload(pj.value, {\n      termCanonicals: b.term_canonicals,\n      existingStems: b.existing_stems || [],\n    });\n  }\n}\nreturn [{\n  json: {\n    usage_row: p.usage_row,\n    cost_exact: p.cost_exact,\n    finish_reason: p.finish_reason,\n    validation_ok: Boolean(validation.ok),\n    errors: validation.errors || [],\n    valid_questions: validation.validQuestions || [],\n  },\n  pairedItem: 0,\n}];"
       }
     },
     {
-      "id": "f9d804c7-4262-4bf1-8857-db68c1fb7964",
+      "id": "5ee8ff3d-9c05-4ff1-9936-b245d8082f67",
       "name": "DB — Log Usage Questions",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        5280,
+        5500,
         140
       ],
       "parameters": {
@@ -643,25 +656,25 @@
       }
     },
     {
-      "id": "57426fd6-3bbc-4c89-8d36-7bd72a949a83",
+      "id": "ad1ffaa1-dc7e-455b-8ecc-53a24e54f735",
       "name": "LLM — Decide Questions",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        5500,
+        5720,
         140
       ],
       "parameters": {
-        "jsCode": "const C = $('Run — Init Constants').first().json.constants;\nconst b = $('LLM — Build Questions Request').first().json;\nconst p = $('LLM — Parse Questions').first().json;\nfunction finalizeQuestions(list, cap) {\n  return list.slice(0, cap).map((q, i) => ({\n    ordinal: i + 1,\n    term_canonical: q.term_canonical,\n    stem: q.stem,\n    choice_a: q.choice_a,\n    choice_b: q.choice_b,\n    choice_c: q.choice_c,\n    choice_d: q.choice_d,\n    correct_choice: q.correct_choice,\n    explanation: q.explanation,\n    choice_explanations: { A: q.explanation_a, B: q.explanation_b, C: q.explanation_c, D: q.explanation_d },\n  }));\n}\nconst target = C.questions_target;\nconst valid = p.valid_questions || [];\nconst soft = new Set(['lt_10_questions', 'shortfall_true']);\nconst errs = (p.errors || []).filter((e) => !soft.has(e));\nconst base = {\n  lecture_id: b.lecture_id,\n  job_id: b.job_id,\n  course_id: b.course_id,\n  subtopic_id: b.subtopic_id,\n  ordinal: b.ordinal,\n  title: b.title,\n  term_canonicals: b.term_canonicals,\n  spent_month_usd: b.spent_month_usd,\n  spent_lecture_usd: b.spent_lecture_usd,\n  step: 'questions_retry',\n  prompt_version: b.prompt_version,\n  first_cost_usd: p.cost_exact,\n  first_valid_count: valid.length,\n};\nif (valid.length >= target) {\n  return [{ json: { ...base, needs_retry: false, questions_json: JSON.stringify(finalizeQuestions(valid, C.max_questions_per_subtopic)), question_count: Math.min(valid.length, C.max_questions_per_subtopic) }, pairedItem: 0 }];\n}\n\n// one retry: fix (nothing valid) or top-up (some valid); then accept whatever is valid\nconst need = target - valid.length;\nlet extra = '';\nif (errs.length) extra += '\\n\\nОШИБКИ_ВАЛИДАЦИИ\\n' + errs.slice(0, 15).map((e) => '- ' + e).join('\\n');\nif (valid.length) {\n  extra += '\\n\\nДОБОР\\nУже есть ' + valid.length + ' валидных вопросов. Нужно ещё не меньше ' + need\n    + '. Верни в questions только новые вопросы и не повторяй stem из списка:\\n'\n    + valid.map((q) => '- ' + q.stem).join('\\n');\n} else {\n  extra += '\\n\\nДОБОР\\nНужно не меньше ' + target + ' вопросов. Верни полный исправленный JSON.';\n}\nconst msgs = b.request_body.messages;\nconst retryBody = {\n  ...b.request_body,\n  messages: [msgs[0], { role: 'user', content: b.user_base + extra }],\n};\nconst P = C.prices_usd_per_1m;\nconst est = Math.ceil((msgs[0].content.length + b.user_base.length + extra.length) / (C.chars_per_token || 2));\nconst projected = (est * P.miss + C.est_output_tokens_questions * P.out) / 1e6;\nconst spentLecture = b.spent_lecture_usd + p.cost_exact;\nconst spentMonth = b.spent_month_usd + p.cost_exact;\nconst budgetOk = spentLecture + projected <= C.max_cost_usd_per_lecture\n  && spentMonth + projected <= C.monthly_budget_usd * C.budget_stop_ratio;\nif (!budgetOk) {\n  return [{ json: { ...base, needs_retry: false, retry_skipped: 'budget', questions_json: JSON.stringify(finalizeQuestions(valid, C.max_questions_per_subtopic)), question_count: valid.length }, pairedItem: 0 }];\n}\nreturn [{\n  json: {\n    ...base,\n    needs_retry: true,\n    existing_stems: valid.map((q) => q.stem),\n    first_valid: valid,\n    first_errors: errs.slice(0, 15),\n    request_body: retryBody,\n  },\n  pairedItem: 0,\n}];"
+        "jsCode": "const C = $('Run — Init Constants').first().json.constants;\nconst b = $('LLM — Build Questions Request').item.json;\nconst p = $('LLM — Parse Questions').item.json;\nfunction finalizeQuestions(list, cap) {\n  return list.slice(0, cap).map((q, i) => ({\n    ordinal: i + 1,\n    term_canonical: q.term_canonical,\n    stem: q.stem,\n    choice_a: q.choice_a,\n    choice_b: q.choice_b,\n    choice_c: q.choice_c,\n    choice_d: q.choice_d,\n    correct_choice: q.correct_choice,\n    explanation: q.explanation,\n    choice_explanations: { A: q.explanation_a, B: q.explanation_b, C: q.explanation_c, D: q.explanation_d },\n  }));\n}\nconst target = C.questions_target;\nconst valid = p.valid_questions || [];\nconst soft = new Set(['lt_10_questions', 'shortfall_true']);\nconst errs = (p.errors || []).filter((e) => !soft.has(e));\nconst base = {\n  ...b,\n  lecture_id: b.lecture_id,\n  job_id: b.job_id,\n  course_id: b.course_id,\n  subtopic_id: b.subtopic_id,\n  ordinal: b.ordinal,\n  title: b.title,\n  term_canonicals: b.term_canonicals,\n  spent_month_usd: b.spent_month_usd,\n  spent_lecture_usd: b.spent_lecture_usd,\n  step: 'questions_retry',\n  prompt_version: b.prompt_version,\n  first_cost_usd: p.cost_exact,\n  first_valid_count: valid.length,\n  loop_run_index: b.loop_run_index,\n};\nif (valid.length >= target) {\n  return [{ json: { ...base, needs_retry: false, questions_json: JSON.stringify(finalizeQuestions(valid, C.max_questions_per_subtopic)), question_count: Math.min(valid.length, C.max_questions_per_subtopic) }, pairedItem: 0 }];\n}\n\n// one retry: fix (nothing valid) or top-up (some valid); then accept whatever is valid\nconst need = target - valid.length;\nlet extra = '';\nif (errs.length) extra += '\\n\\nОШИБКИ_ВАЛИДАЦИИ\\n' + errs.slice(0, 15).map((e) => '- ' + e).join('\\n');\nif (valid.length) {\n  extra += '\\n\\nДОБОР\\nУже есть ' + valid.length + ' валидных вопросов. Нужно ещё не меньше ' + need\n    + '. Верни в questions только новые вопросы и не повторяй stem из списка:\\n'\n    + valid.map((q) => '- ' + q.stem).join('\\n');\n} else {\n  extra += '\\n\\nДОБОР\\nНужно не меньше ' + target + ' вопросов. Верни полный исправленный JSON.';\n}\nconst msgs = b.request_body.messages;\nconst retryBody = {\n  ...b.request_body,\n  messages: [msgs[0], { role: 'user', content: b.user_base + extra }],\n};\nconst P = C.prices_usd_per_1m;\nconst est = Math.ceil((msgs[0].content.length + b.user_base.length + extra.length) / (C.chars_per_token || 2));\nconst projected = (est * P.miss + C.est_output_tokens_questions * P.out) / 1e6;\nconst spentLecture = b.spent_lecture_usd + p.cost_exact;\nconst spentMonth = b.spent_month_usd + p.cost_exact;\nconst budgetOk = spentLecture + projected <= C.max_cost_usd_per_lecture\n  && spentMonth + projected <= C.monthly_budget_usd * C.budget_stop_ratio;\nif (!budgetOk) {\n  return [{ json: { ...base, needs_retry: false, retry_skipped: 'budget', questions_json: JSON.stringify(finalizeQuestions(valid, C.max_questions_per_subtopic)), question_count: valid.length }, pairedItem: 0 }];\n}\nreturn [{\n  json: {\n    ...base,\n    needs_retry: true,\n    existing_stems: valid.map((q) => q.stem),\n    first_valid: valid,\n    first_errors: errs.slice(0, 15),\n    request_body: retryBody,\n  },\n  pairedItem: 0,\n}];"
       }
     },
     {
-      "id": "2c39f21c-1e9a-4952-af94-5b471ac81827",
+      "id": "c9911637-61cb-4a13-ba3c-1ffdc43f7c29",
       "name": "LLM — Needs Retry",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        5720,
+        5940,
         140
       ],
       "parameters": {
@@ -673,7 +686,7 @@
           },
           "conditions": [
             {
-              "id": "d5722897-0253-442e-a465-c518fbd7d697",
+              "id": "b55eca95-4498-494e-b9ea-f93cddf6bd81",
               "leftValue": "={{ String($json.needs_retry) }}",
               "rightValue": "true",
               "operator": {
@@ -687,12 +700,12 @@
       }
     },
     {
-      "id": "78a3afcb-4360-4a16-8650-3da90dc61113",
+      "id": "e1837347-1458-42aa-b50a-167b443842be",
       "name": "Shared — DeepSeek Questions Retry",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.5,
       "position": [
-        5940,
+        6160,
         40
       ],
       "parameters": {
@@ -717,25 +730,25 @@
       "onError": "continueErrorOutput"
     },
     {
-      "id": "35b4a74e-c437-4cab-af7d-88996800f333",
+      "id": "97097019-f8e8-44d2-98f2-6965b0224b88",
       "name": "LLM — Parse Questions Retry",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        6160,
+        6380,
         40
       ],
       "parameters": {
-        "jsCode": "const C = $('Run — Init Constants').first().json.constants;\nconst b = $('LLM — Decide Questions').first().json;\nfunction parseDeepSeek(resp, C, src, step, promptVersion) {\n  const r = resp || {};\n  const choice = (r.choices && r.choices[0]) || {};\n  const content = String((choice.message && choice.message.content) || '');\n  const u = r.usage || {};\n  const hit = Number(u.prompt_cache_hit_tokens != null\n    ? u.prompt_cache_hit_tokens\n    : ((u.prompt_tokens_details && u.prompt_tokens_details.cached_tokens) || 0)) || 0;\n  let miss = u.prompt_cache_miss_tokens != null ? Number(u.prompt_cache_miss_tokens) : null;\n  const promptTokens = Number(u.prompt_tokens != null ? u.prompt_tokens : ((miss || 0) + hit)) || 0;\n  if (miss == null || !Number.isFinite(miss)) miss = Math.max(promptTokens - hit, 0);\n  const completion = Number(u.completion_tokens) || 0;\n  const P = C.prices_usd_per_1m;\n  const costExact = (miss * P.miss + hit * P.hit + completion * P.out) / 1e6;\n  return {\n    content,\n    finish_reason: choice.finish_reason || null,\n    cost_exact: costExact,\n    usage_row: {\n      lecture_id: src.lecture_id,\n      job_id: src.job_id,\n      workflow_name: C.workflow_name,\n      workflow_version: C.workflow_version,\n      model: r.model || C.llm_model,\n      prompt_tokens: promptTokens,\n      completion_tokens: completion,\n      cost_usd: Number(costExact.toFixed(6)),\n      prompt_version: promptVersion,\n      prompt_cache_hit_tokens: hit,\n      step,\n    },\n  };\n}\n/**\n * Validate gen_questions_v2 JSON for one subtopic.\n * Pure function — no I/O. Used from n8n Code node and node:test.\n */\n\nfunction normalizeChoice(text) {\n  return String(text || '')\n    .toLowerCase()\n    .replace(/[\\s\\u00a0]+/g, ' ')\n    .replace(/[.,;:!?…]+$/g, '')\n    .trim();\n}\n\nfunction normalizeStem(text) {\n  return normalizeChoice(text);\n}\n\n/**\n * @param {unknown} raw parsed JSON (object) or string\n * @param {{ termCanonicals: string[], existingStems?: string[] }} ctx\n * @returns {{ ok: boolean, errors: string[], data?: object, validQuestions?: object[] }}\n */\nfunction validateQuestionsPayload(raw, ctx) {\n  const errors = [];\n  const termSet = new Set((ctx.termCanonicals || []).map((t) => String(t)));\n  const existingStems = new Set((ctx.existingStems || []).map(normalizeStem));\n\n  let data = raw;\n  if (typeof raw === 'string') {\n    try {\n      data = JSON.parse(raw);\n    } catch {\n      return { ok: false, errors: ['invalid_json'] };\n    }\n  }\n\n  if (!data || typeof data !== 'object' || Array.isArray(data)) {\n    return { ok: false, errors: ['not_object'] };\n  }\n\n  const allowedTop = new Set(['subtopic_ordinal', 'shortfall', 'questions']);\n  for (const key of Object.keys(data)) {\n    if (!allowedTop.has(key)) errors.push(`extra_field:${key}`);\n  }\n\n  if (typeof data.subtopic_ordinal !== 'number' || data.subtopic_ordinal < 1) {\n    errors.push('bad_subtopic_ordinal');\n  }\n  if (typeof data.shortfall !== 'boolean') {\n    errors.push('bad_shortfall');\n  }\n  if (!Array.isArray(data.questions)) {\n    errors.push('questions_not_array');\n    return { ok: false, errors };\n  }\n\n  const allowedQ = new Set([\n    'term_canonical',\n    'kind',\n    'stem',\n    'choice_a',\n    'choice_b',\n    'choice_c',\n    'choice_d',\n    'correct_choice',\n    'explanation',\n    'explanation_a',\n    'explanation_b',\n    'explanation_c',\n    'explanation_d',\n  ]);\n\n  const stemsInBatch = new Set();\n  const validQuestions = [];\n\n  data.questions.forEach((q, idx) => {\n    const prefix = `q${idx}`;\n    if (!q || typeof q !== 'object' || Array.isArray(q)) {\n      errors.push(`${prefix}:not_object`);\n      return;\n    }\n    for (const key of Object.keys(q)) {\n      if (!allowedQ.has(key)) errors.push(`${prefix}:extra_field:${key}`);\n    }\n\n    const required = [...allowedQ];\n    for (const key of required) {\n      if (q[key] === undefined || q[key] === null || q[key] === '') {\n        errors.push(`${prefix}:missing:${key}`);\n      }\n    }\n\n    if (q.kind !== 'life_mcq') errors.push(`${prefix}:bad_kind`);\n    if (!['A', 'B', 'C', 'D'].includes(q.correct_choice)) {\n      errors.push(`${prefix}:bad_correct_choice`);\n    }\n    if (!termSet.has(String(q.term_canonical || ''))) {\n      errors.push(`${prefix}:unknown_term:${q.term_canonical}`);\n    }\n\n    const choices = [q.choice_a, q.choice_b, q.choice_c, q.choice_d].map(normalizeChoice);\n    if (choices.some((c) => !c)) errors.push(`${prefix}:empty_choice`);\n    if (new Set(choices).size !== 4) errors.push(`${prefix}:duplicate_choices`);\n\n    const correctIdx = { A: 0, B: 1, C: 2, D: 3 }[q.correct_choice];\n    if (correctIdx != null) {\n      const correctText = choices[correctIdx];\n      choices.forEach((c, i) => {\n        if (i !== correctIdx && c === correctText) {\n          errors.push(`${prefix}:correct_duplicated_in_other`);\n        }\n      });\n    }\n\n    for (const letter of ['a', 'b', 'c', 'd']) {\n      if (!String(q[`explanation_${letter}`] || '').trim()) {\n        errors.push(`${prefix}:missing_explanation_${letter}`);\n      }\n    }\n    if (!String(q.explanation || '').trim()) errors.push(`${prefix}:missing_explanation`);\n\n    const stemNorm = normalizeStem(q.stem);\n    if (!stemNorm) errors.push(`${prefix}:empty_stem`);\n    if (stemsInBatch.has(stemNorm) || existingStems.has(stemNorm)) {\n      errors.push(`${prefix}:duplicate_stem`);\n    }\n    stemsInBatch.add(stemNorm);\n\n    const qErrors = errors.filter((e) => e.startsWith(`${prefix}:`));\n    if (qErrors.length === 0) validQuestions.push(q);\n  });\n\n  if (data.questions.length < 10) {\n    errors.push('lt_10_questions');\n  }\n  if (data.shortfall === true) {\n    errors.push('shortfall_true');\n  }\n\n  const hardFail = errors.some(\n    (e) =>\n      e === 'invalid_json' ||\n      e === 'not_object' ||\n      e === 'questions_not_array' ||\n      e.startsWith('extra_field:') ||\n      e === 'bad_subtopic_ordinal' ||\n      e === 'bad_shortfall',\n  );\n\n  // Schema/JSON hard errors → not ok. Soft: lt_10 / shortfall / per-question → ok=false but validQuestions kept.\n  const ok =\n    !hardFail &&\n    errors.filter((e) => e !== 'lt_10_questions' && e !== 'shortfall_true' && !e.startsWith('q')).length === 0 &&\n    validQuestions.length === data.questions.length &&\n    data.questions.length >= 10 &&\n    data.shortfall === false;\n\n  return {\n    ok,\n    errors,\n    data,\n    validQuestions,\n    shortfall: data.shortfall === true || validQuestions.length < 10,\n  };\n}\n\nfunction parseJson(text) {\n  let t = String(text || '').trim();\n  const m = t.match(/^```(?:json)?\\s*([\\s\\S]*?)\\s*```$/);\n  if (m) t = m[1];\n  try {\n    return { value: JSON.parse(t) };\n  } catch (e) {\n    const a = t.indexOf('{');\n    const z = t.lastIndexOf('}');\n    if (a >= 0 && z > a) {\n      try {\n        return { value: JSON.parse(t.slice(a, z + 1)) };\n      } catch (e2) {\n        /* fall through */\n      }\n    }\n    return { error: 'invalid_json' };\n  }\n}\n\nconst p = parseDeepSeek(items[0].json, C, b, 'questions_retry', C.prompt_versions.questions);\nlet validation;\nif (!p.content.trim()) {\n  validation = { ok: false, errors: ['invalid_json', 'llm_empty_response'], validQuestions: [] };\n} else {\n  const pj = parseJson(p.content);\n  if (pj.error) {\n    validation = {\n      ok: false,\n      errors: ['invalid_json'].concat(p.finish_reason === 'length' ? ['llm_truncated'] : []),\n      validQuestions: [],\n    };\n  } else {\n    validation = validateQuestionsPayload(pj.value, {\n      termCanonicals: b.term_canonicals,\n      existingStems: b.existing_stems || [],\n    });\n  }\n}\nreturn [{\n  json: {\n    usage_row: p.usage_row,\n    cost_exact: p.cost_exact,\n    finish_reason: p.finish_reason,\n    validation_ok: Boolean(validation.ok),\n    errors: validation.errors || [],\n    valid_questions: validation.validQuestions || [],\n  },\n  pairedItem: 0,\n}];"
+        "jsCode": "const C = $('Run — Init Constants').first().json.constants;\nconst b = $('LLM — Decide Questions').item.json;\nfunction parseDeepSeek(resp, C, src, step, promptVersion) {\n  const r = resp || {};\n  const choice = (r.choices && r.choices[0]) || {};\n  const content = String((choice.message && choice.message.content) || '');\n  const u = r.usage || {};\n  const hit = Number(u.prompt_cache_hit_tokens != null\n    ? u.prompt_cache_hit_tokens\n    : ((u.prompt_tokens_details && u.prompt_tokens_details.cached_tokens) || 0)) || 0;\n  let miss = u.prompt_cache_miss_tokens != null ? Number(u.prompt_cache_miss_tokens) : null;\n  const promptTokens = Number(u.prompt_tokens != null ? u.prompt_tokens : ((miss || 0) + hit)) || 0;\n  if (miss == null || !Number.isFinite(miss)) miss = Math.max(promptTokens - hit, 0);\n  const completion = Number(u.completion_tokens) || 0;\n  const P = C.prices_usd_per_1m;\n  const costExact = (miss * P.miss + hit * P.hit + completion * P.out) / 1e6;\n  return {\n    content,\n    finish_reason: choice.finish_reason || null,\n    cost_exact: costExact,\n    usage_row: {\n      lecture_id: src.lecture_id,\n      job_id: src.job_id,\n      workflow_name: C.workflow_name,\n      workflow_version: C.workflow_version,\n      model: r.model || C.llm_model,\n      prompt_tokens: promptTokens,\n      completion_tokens: completion,\n      cost_usd: Number(costExact.toFixed(6)),\n      prompt_version: promptVersion,\n      prompt_cache_hit_tokens: hit,\n      step,\n    },\n  };\n}\n/**\n * Validate gen_questions_v2 JSON for one subtopic.\n * Pure function — no I/O. Used from n8n Code node and node:test.\n */\n\nfunction normalizeChoice(text) {\n  return String(text || '')\n    .toLowerCase()\n    .replace(/[\\s\\u00a0]+/g, ' ')\n    .replace(/[.,;:!?…]+$/g, '')\n    .trim();\n}\n\nfunction normalizeStem(text) {\n  return normalizeChoice(text);\n}\n\n/**\n * @param {unknown} raw parsed JSON (object) or string\n * @param {{ termCanonicals: string[], existingStems?: string[] }} ctx\n * @returns {{ ok: boolean, errors: string[], data?: object, validQuestions?: object[] }}\n */\nfunction validateQuestionsPayload(raw, ctx) {\n  const errors = [];\n  const termSet = new Set((ctx.termCanonicals || []).map((t) => String(t)));\n  const existingStems = new Set((ctx.existingStems || []).map(normalizeStem));\n\n  let data = raw;\n  if (typeof raw === 'string') {\n    try {\n      data = JSON.parse(raw);\n    } catch {\n      return { ok: false, errors: ['invalid_json'] };\n    }\n  }\n\n  if (!data || typeof data !== 'object' || Array.isArray(data)) {\n    return { ok: false, errors: ['not_object'] };\n  }\n\n  const allowedTop = new Set(['subtopic_ordinal', 'shortfall', 'questions']);\n  for (const key of Object.keys(data)) {\n    if (!allowedTop.has(key)) errors.push(`extra_field:${key}`);\n  }\n\n  if (typeof data.subtopic_ordinal !== 'number' || data.subtopic_ordinal < 1) {\n    errors.push('bad_subtopic_ordinal');\n  }\n  if (typeof data.shortfall !== 'boolean') {\n    errors.push('bad_shortfall');\n  }\n  if (!Array.isArray(data.questions)) {\n    errors.push('questions_not_array');\n    return { ok: false, errors };\n  }\n\n  const allowedQ = new Set([\n    'term_canonical',\n    'kind',\n    'stem',\n    'choice_a',\n    'choice_b',\n    'choice_c',\n    'choice_d',\n    'correct_choice',\n    'explanation',\n    'explanation_a',\n    'explanation_b',\n    'explanation_c',\n    'explanation_d',\n  ]);\n\n  const stemsInBatch = new Set();\n  const validQuestions = [];\n\n  data.questions.forEach((q, idx) => {\n    const prefix = `q${idx}`;\n    if (!q || typeof q !== 'object' || Array.isArray(q)) {\n      errors.push(`${prefix}:not_object`);\n      return;\n    }\n    for (const key of Object.keys(q)) {\n      if (!allowedQ.has(key)) errors.push(`${prefix}:extra_field:${key}`);\n    }\n\n    const required = [...allowedQ];\n    for (const key of required) {\n      if (q[key] === undefined || q[key] === null || q[key] === '') {\n        errors.push(`${prefix}:missing:${key}`);\n      }\n    }\n\n    if (q.kind !== 'life_mcq') errors.push(`${prefix}:bad_kind`);\n    if (!['A', 'B', 'C', 'D'].includes(q.correct_choice)) {\n      errors.push(`${prefix}:bad_correct_choice`);\n    }\n    if (!termSet.has(String(q.term_canonical || ''))) {\n      errors.push(`${prefix}:unknown_term:${q.term_canonical}`);\n    }\n\n    const choices = [q.choice_a, q.choice_b, q.choice_c, q.choice_d].map(normalizeChoice);\n    if (choices.some((c) => !c)) errors.push(`${prefix}:empty_choice`);\n    if (new Set(choices).size !== 4) errors.push(`${prefix}:duplicate_choices`);\n\n    const correctIdx = { A: 0, B: 1, C: 2, D: 3 }[q.correct_choice];\n    if (correctIdx != null) {\n      const correctText = choices[correctIdx];\n      choices.forEach((c, i) => {\n        if (i !== correctIdx && c === correctText) {\n          errors.push(`${prefix}:correct_duplicated_in_other`);\n        }\n      });\n    }\n\n    for (const letter of ['a', 'b', 'c', 'd']) {\n      if (!String(q[`explanation_${letter}`] || '').trim()) {\n        errors.push(`${prefix}:missing_explanation_${letter}`);\n      }\n    }\n    if (!String(q.explanation || '').trim()) errors.push(`${prefix}:missing_explanation`);\n\n    const stemNorm = normalizeStem(q.stem);\n    if (!stemNorm) errors.push(`${prefix}:empty_stem`);\n    if (stemsInBatch.has(stemNorm) || existingStems.has(stemNorm)) {\n      errors.push(`${prefix}:duplicate_stem`);\n    }\n    stemsInBatch.add(stemNorm);\n\n    const qErrors = errors.filter((e) => e.startsWith(`${prefix}:`));\n    if (qErrors.length === 0) validQuestions.push(q);\n  });\n\n  if (data.questions.length < 10) {\n    errors.push('lt_10_questions');\n  }\n  if (data.shortfall === true) {\n    errors.push('shortfall_true');\n  }\n\n  const hardFail = errors.some(\n    (e) =>\n      e === 'invalid_json' ||\n      e === 'not_object' ||\n      e === 'questions_not_array' ||\n      e.startsWith('extra_field:') ||\n      e === 'bad_subtopic_ordinal' ||\n      e === 'bad_shortfall',\n  );\n\n  // Schema/JSON hard errors → not ok. Soft: lt_10 / shortfall / per-question → ok=false but validQuestions kept.\n  const ok =\n    !hardFail &&\n    errors.filter((e) => e !== 'lt_10_questions' && e !== 'shortfall_true' && !e.startsWith('q')).length === 0 &&\n    validQuestions.length === data.questions.length &&\n    data.questions.length >= 10 &&\n    data.shortfall === false;\n\n  return {\n    ok,\n    errors,\n    data,\n    validQuestions,\n    shortfall: data.shortfall === true || validQuestions.length < 10,\n  };\n}\n\nfunction parseJson(text) {\n  let t = String(text || '').trim();\n  const m = t.match(/^```(?:json)?\\s*([\\s\\S]*?)\\s*```$/);\n  if (m) t = m[1];\n  try {\n    return { value: JSON.parse(t) };\n  } catch (e) {\n    const a = t.indexOf('{');\n    const z = t.lastIndexOf('}');\n    if (a >= 0 && z > a) {\n      try {\n        return { value: JSON.parse(t.slice(a, z + 1)) };\n      } catch (e2) {\n        /* fall through */\n      }\n    }\n    return { error: 'invalid_json' };\n  }\n}\n\nconst p = parseDeepSeek(items[0].json, C, b, 'questions_retry', C.prompt_versions.questions);\nlet validation;\nif (!p.content.trim()) {\n  validation = { ok: false, errors: ['invalid_json', 'llm_empty_response'], validQuestions: [] };\n} else {\n  const pj = parseJson(p.content);\n  if (pj.error) {\n    validation = {\n      ok: false,\n      errors: ['invalid_json'].concat(p.finish_reason === 'length' ? ['llm_truncated'] : []),\n      validQuestions: [],\n    };\n  } else {\n    validation = validateQuestionsPayload(pj.value, {\n      termCanonicals: b.term_canonicals,\n      existingStems: b.existing_stems || [],\n    });\n  }\n}\nreturn [{\n  json: {\n    usage_row: p.usage_row,\n    cost_exact: p.cost_exact,\n    finish_reason: p.finish_reason,\n    validation_ok: Boolean(validation.ok),\n    errors: validation.errors || [],\n    valid_questions: validation.validQuestions || [],\n  },\n  pairedItem: 0,\n}];"
       }
     },
     {
-      "id": "45a0463c-2dfc-4cdf-8ac0-307397fd5005",
+      "id": "b2ca9672-9659-41b9-a9d4-1168a753d368",
       "name": "DB — Log Usage Questions Retry",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        6380,
+        6600,
         40
       ],
       "parameters": {
@@ -753,25 +766,25 @@
       }
     },
     {
-      "id": "784c14dc-8950-4305-b0a2-8a77d6e78ace",
+      "id": "ed997740-0f2f-4d02-952a-372859b379ff",
       "name": "LLM — Merge Retry",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        6600,
+        6820,
         40
       ],
       "parameters": {
-        "jsCode": "const C = $('Run — Init Constants').first().json.constants;\nconst d = $('LLM — Decide Questions').first().json;\nconst r = $('LLM — Parse Questions Retry').first().json;\nfunction finalizeQuestions(list, cap) {\n  return list.slice(0, cap).map((q, i) => ({\n    ordinal: i + 1,\n    term_canonical: q.term_canonical,\n    stem: q.stem,\n    choice_a: q.choice_a,\n    choice_b: q.choice_b,\n    choice_c: q.choice_c,\n    choice_d: q.choice_d,\n    correct_choice: q.correct_choice,\n    explanation: q.explanation,\n    choice_explanations: { A: q.explanation_a, B: q.explanation_b, C: q.explanation_c, D: q.explanation_d },\n  }));\n}\nconst merged = (d.first_valid || []).concat(r.valid_questions || []);\nconst finalList = finalizeQuestions(merged, C.max_questions_per_subtopic);\nreturn [{\n  json: {\n    lecture_id: d.lecture_id,\n    job_id: d.job_id,\n    course_id: d.course_id,\n    subtopic_id: d.subtopic_id,\n    ordinal: d.ordinal,\n    title: d.title,\n    retried: true,\n    question_count: finalList.length,\n    questions_json: JSON.stringify(finalList),\n  },\n  pairedItem: 0,\n}];"
+        "jsCode": "const C = $('Run — Init Constants').first().json.constants;\nconst d = $('LLM — Decide Questions').item.json;\nconst r = $('LLM — Parse Questions Retry').item.json;\nfunction finalizeQuestions(list, cap) {\n  return list.slice(0, cap).map((q, i) => ({\n    ordinal: i + 1,\n    term_canonical: q.term_canonical,\n    stem: q.stem,\n    choice_a: q.choice_a,\n    choice_b: q.choice_b,\n    choice_c: q.choice_c,\n    choice_d: q.choice_d,\n    correct_choice: q.correct_choice,\n    explanation: q.explanation,\n    choice_explanations: { A: q.explanation_a, B: q.explanation_b, C: q.explanation_c, D: q.explanation_d },\n  }));\n}\nconst merged = (d.first_valid || []).concat(r.valid_questions || []);\nconst finalList = finalizeQuestions(merged, C.max_questions_per_subtopic);\nreturn [{\n  json: {\n    ...d,\n    lecture_id: d.lecture_id,\n    job_id: d.job_id,\n    course_id: d.course_id,\n    subtopic_id: d.subtopic_id,\n    ordinal: d.ordinal,\n    title: d.title,\n    retried: true,\n    question_count: finalList.length,\n    questions_json: JSON.stringify(finalList),\n  },\n  pairedItem: 0,\n}];"
       }
     },
     {
-      "id": "4bde7045-1308-4801-a411-9bdc068885c6",
+      "id": "b0b57e84-1085-4a2a-af1c-7c18af396b5e",
       "name": "DB — Upsert Questions",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        6820,
+        7040,
         220
       ],
       "parameters": {
@@ -789,19 +802,19 @@
       }
     },
     {
-      "id": "aeb0967b-ace7-4ccb-98a5-a8e8f87ea978",
+      "id": "46fbb0fe-91b5-46e4-8c8c-791bba75fc41",
       "name": "DB — Finish Job",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        3960,
+        4060,
         0
       ],
       "parameters": {
         "operation": "executeQuery",
         "query": "WITH params AS (\n  SELECT $1::uuid AS lecture_id, $2::uuid AS job_id, $3::text AS workflow_version,\n         $4::int AS terms_count, $5::jsonb AS prompt_versions, $6::boolean AS transcript_truncated\n), counts AS (\n  SELECT st.ordinal, st.title, count(q.id)::int AS n\n  FROM psy.subtopics st\n  LEFT JOIN psy.questions q ON q.subtopic_id = st.id AND q.kind = 'life_mcq'\n  WHERE st.lecture_id = (SELECT lecture_id FROM params)\n  GROUP BY st.id, st.ordinal, st.title\n), agg AS (\n  SELECT\n    COALESCE(sum(n), 0)::int AS total_questions,\n    count(*)::int AS subtopics,\n    COALESCE(\n      jsonb_agg(jsonb_build_object('subtopic_ordinal', ordinal, 'title', title, 'questions', n) ORDER BY ordinal)\n        FILTER (WHERE n < 10),\n      '[]'::jsonb\n    ) AS short_questions\n  FROM counts\n), usage AS (\n  SELECT count(*)::int AS llm_calls, COALESCE(sum(cost_usd), 0)::float8 AS cost_usd\n  FROM psy.llm_usage\n  WHERE job_id = (SELECT job_id FROM params)\n), lec AS (\n  UPDATE psy.lectures l\n  SET status = 'questions_ready', error = NULL\n  FROM params p\n  WHERE l.id = p.lecture_id\n    AND (SELECT total_questions FROM agg) > 0\n    AND l.status IN ('konspekt_ready', 'questions_ready', 'failed')\n  RETURNING l.id\n), done_job AS (\n  UPDATE psy.jobs j\n  SET status = CASE WHEN (SELECT total_questions FROM agg) > 0 THEN 'done' ELSE 'failed' END,\n      finished_at = now(),\n      error = CASE WHEN (SELECT total_questions FROM agg) > 0 THEN NULL ELSE 'no_questions_generated' END,\n      attempts = CASE WHEN (SELECT total_questions FROM agg) > 0 THEN j.attempts ELSE GREATEST(j.attempts, 3) END,\n      payload = COALESCE(j.payload, '{}'::jsonb) || jsonb_build_object(\n        'workflow_version', p.workflow_version,\n        'prompt_versions', p.prompt_versions,\n        'terms_count', p.terms_count,\n        'subtopics_count', (SELECT subtopics FROM agg),\n        'questions_count', (SELECT total_questions FROM agg),\n        'short_questions', (SELECT short_questions FROM agg),\n        'transcript_truncated', p.transcript_truncated,\n        'llm_calls', (SELECT llm_calls FROM usage),\n        'cost_usd', (SELECT cost_usd FROM usage)\n      )\n  FROM params p\n  WHERE j.id = p.job_id\n  RETURNING j.id, j.status\n)\nSELECT\n  (SELECT id FROM lec) AS lecture_id,\n  (SELECT id FROM done_job) AS job_id,\n  (SELECT status FROM done_job) AS job_status,\n  (SELECT total_questions FROM agg) AS questions_count,\n  (SELECT subtopics FROM agg) AS subtopics_count,\n  (SELECT short_questions FROM agg) AS short_questions,\n  (SELECT llm_calls FROM usage) AS llm_calls,\n  (SELECT cost_usd FROM usage) AS cost_usd",
         "options": {
-          "queryReplacement": "={{ [\n  $('Load — Lecture').first().json.lecture_id,\n  $('Run — Create Job').first().json.id,\n  $('Run — Init Constants').first().json.constants.workflow_version,\n  $('LLM — Parse Terms').first().json.terms.length,\n  JSON.stringify($('Run — Init Constants').first().json.constants.prompt_versions),\n  Boolean($('LLM — Parse Terms').first().json.transcript_truncated)\n] }}"
+          "queryReplacement": "={{ [\n  $('Load — Lecture').first().json.lecture_id,\n  $('Run — Create Job').first().json.id,\n  $('Run — Init Constants').first().json.constants.workflow_version,\n  $('LLM — Merge Thin Subtopics').first().json.terms.length,\n  JSON.stringify($('Run — Init Constants').first().json.constants.prompt_versions),\n  Boolean($('LLM — Merge Thin Subtopics').first().json.transcript_truncated)\n] }}"
         }
       },
       "credentials": {
@@ -813,7 +826,7 @@
       "executeOnce": true
     },
     {
-      "id": "faf38024-4b35-481e-a328-909d4cb60864",
+      "id": "db6ee7c3-d14e-40a6-b03b-13f29f432ea1",
       "name": "Fin — Fail Context",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -822,11 +835,11 @@
         600
       ],
       "parameters": {
-        "jsCode": "const job = $('Run — Create Job').first().json;\nconst e = (items[0] && items[0].json) || {};\nconst err = e.error && typeof e.error === 'object' ? e.error : {};\nlet permanent = false;\nlet keepLecture = false;\nlet message = null;\nif (e.budget_exceeded === true) {\n  permanent = true;\n  keepLecture = true;\n  message = e.error_message || 'budget_exceeded';\n} else if (Number(e.cards_count) > 0) {\n  permanent = true;\n  keepLecture = true;\n  message = 'cards exist, regenerate refused';\n} else if (e.konspekt_md !== undefined && !String(e.konspekt_md || '').trim() && !e.error) {\n  permanent = true;\n  message = 'empty_konspekt: у лекции нет конспекта, LLM не вызывался';\n}\nif (message === null) {\n  message = e.error_message || err.message || (typeof e.error === 'string' ? e.error : null) || e.message\n    || JSON.stringify(e).slice(0, 500);\n}\nmessage = String(message).slice(0, 800);\nlet statusCode = Number(e.statusCode ?? e.httpCode ?? err.httpCode ?? err.status ?? err.statusCode ?? 0);\nif (!Number.isFinite(statusCode)) statusCode = 0;\nif (!statusCode) {\n  const m = message.match(/^(\\d{3})\\b/);\n  if (m) statusCode = Number(m[1]);\n}\nreturn [{\n  json: {\n    job_id: job.id,\n    lecture_id: job.lecture_id,\n    attempts: job.attempts,\n    status_code: statusCode,\n    error_message: message,\n    permanent,\n    keep_lecture: keepLecture,\n  },\n  pairedItem: 0,\n}];"
+        "jsCode": "const job = $('Run — Create Job').first().json;\nconst e = (items[0] && items[0].json) || {};\nconst err = e.error && typeof e.error === 'object' ? e.error : {};\nlet permanent = false;\nlet keepLecture = false;\nlet message = null;\nif (e.budget_exceeded === true) {\n  permanent = true;\n  keepLecture = true;\n  message = e.error_message || 'budget_exceeded';\n} else if (Number(e.cards_count) > 0) {\n  permanent = true;\n  keepLecture = true;\n  message = 'cards exist, regenerate refused';\n} else if (e.konspekt_md !== undefined && !String(e.konspekt_md || '').trim() && !e.error) {\n  permanent = true;\n  keepLecture = true;\n  message = 'empty_konspekt: у лекции нет конспекта, LLM не вызывался';\n}\nif (message === null) {\n  message = e.error_message || err.message || (typeof e.error === 'string' ? e.error : null) || e.message\n    || JSON.stringify(e).slice(0, 500);\n}\nmessage = String(message).slice(0, 800);\nlet statusCode = Number(e.statusCode ?? e.httpCode ?? err.httpCode ?? err.status ?? err.statusCode ?? 0);\nif (!Number.isFinite(statusCode)) statusCode = 0;\nif (!statusCode) {\n  const m = message.match(/^(\\d{3})\\b/);\n  if (m) statusCode = Number(m[1]);\n}\nreturn [{\n  json: {\n    job_id: job.id,\n    lecture_id: job.lecture_id,\n    attempts: job.attempts,\n    status_code: statusCode,\n    error_message: message,\n    permanent,\n    keep_lecture: keepLecture,\n  },\n  pairedItem: 0,\n}];"
       }
     },
     {
-      "id": "a2eaa26e-7c1b-4e19-9d13-4fe6d63417dc",
+      "id": "9dd7ebf0-7fb5-4282-942e-a104c5e445d3",
       "name": "Fin — Fail Job",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -1047,7 +1060,7 @@
       "main": [
         [
           {
-            "node": "DB — Upsert Terms",
+            "node": "LLM — Merge Thin Subtopics",
             "type": "main",
             "index": 0
           }
@@ -1055,6 +1068,17 @@
         [
           {
             "node": "Fin — Fail Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM — Merge Thin Subtopics": {
+      "main": [
+        [
+          {
+            "node": "DB — Upsert Terms",
             "type": "main",
             "index": 0
           }

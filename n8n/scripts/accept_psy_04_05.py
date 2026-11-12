@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Synthetic acceptance for psy_04 / psy_05. No secrets printed. Fixture not committed."""
+"""Synthetic acceptance for psy_04 / psy_05. No secrets printed. Fixture not committed.
+
+Execute via docker exec into the running n8n container (no encryptionKey).
+SQL via psql -h 127.0.0.1 -U psy_n8n (TCP trust inside db container; no password).
+"""
 
 from __future__ import annotations
 
@@ -31,7 +35,7 @@ def sh(cmd: str, check: bool = True, timeout: int = 600) -> subprocess.Completed
 
 
 def psql(sql: str) -> str:
-    # Feed SQL via stdin to remote psql
+    """Run SQL on prod as psy_n8n via TCP trust on localhost (no password in shell)."""
     proc = subprocess.run(
         [
             "ssh",
@@ -43,8 +47,10 @@ def psql(sql: str) -> str:
             "-i",
             "myspb-supabase-n4i8rx-supabase-db",
             "psql",
+            "-h",
+            "127.0.0.1",
             "-U",
-            "postgres",
+            "psy_n8n",
             "-d",
             "postgres",
             "-v",
@@ -74,19 +80,15 @@ def parse_json_row(stdout: str):
 
 
 def one_off(workflow_id: str, label: str, timeout: int = 900) -> tuple[int, str]:
+    """Execute inactive workflow inside the already-running n8n container (no encryptionKey)."""
     script = f"""
 set -euo pipefail
-ENC=$(docker exec myn8n-n8n-iucjks-n8n-1 node -e 'console.log(JSON.parse(require("fs").readFileSync("/home/node/.n8n/config","utf8")).encryptionKey)')
-CID=$(docker create --network myn8n-n8n-iucjks -v myn8n-n8n-iucjks_n8n_data:/home/node/.n8n \\
-  -e N8N_ENCRYPTION_KEY="$ENC" -e N8N_DIAGNOSTICS_ENABLED=false -u node --entrypoint /usr/local/bin/n8n \\
-  docker.n8n.io/n8nio/n8n:2.35.3 execute --id={workflow_id} --rawOutput)
-docker network connect myspb-supabase-n4i8rx "$CID" >/dev/null
 set +e
-OUT=$(docker start -a "$CID" 2>&1)
+OUT=$(docker exec -u node -e N8N_DIAGNOSTICS_ENABLED=false myn8n-n8n-iucjks-n8n-1 \
+  n8n execute --id={workflow_id} --rawOutput 2>&1)
 EC=$?
 set -e
-docker rm "$CID" >/dev/null
-echo "$OUT"
+printf '%s\n' "$OUT"
 exit $EC
 """
     print(f"→ execute {label} ({workflow_id})", flush=True)

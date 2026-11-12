@@ -37,7 +37,7 @@ DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
 
 WF_VER = {
     "psy_04": "psy_04_konspekt_v1",
-    "psy_05": "psy_05_terms_questions_v1",
+    "psy_05": "psy_05_terms_questions_v2",
 }
 
 # psy_03 lives in n8n already; id only used as sanity check / fallback when .id is missing.
@@ -62,6 +62,13 @@ def js_literal(value: str) -> str:
 
 def load_validator_js() -> str:
     src = (LIB / "validate_questions.js").read_text(encoding="utf-8")
+    src = src.replace("'use strict';", "")
+    src = re.sub(r"module\.exports\s*=\s*\{[\s\S]*?\};?", "", src)
+    return src.strip()
+
+
+def load_subtopic_questions_js() -> str:
+    src = (LIB / "subtopic_questions.js").read_text(encoding="utf-8")
     src = src.replace("'use strict';", "")
     src = re.sub(r"module\.exports\s*=\s*\{[\s\S]*?\};?", "", src)
     return src.strip()
@@ -918,12 +925,14 @@ const constants = {
   terms_max_input_tokens: 80000,
   est_output_tokens_terms: 6000,
   est_output_tokens_questions: 6000,
-  est_input_tokens_questions: 12000,
+  est_input_tokens_questions: 8000,
   est_subtopics_for_budget: 8,
   questions_target: 10,
   max_questions_per_subtopic: 14,
-  questions_transcript_max_chars: 20000,
-  prompt_versions: { terms: 'extract_terms_v2', questions: 'gen_questions_v2' },
+  questions_konspekt_max_chars: 5500,
+  questions_transcript_max_chars: 7000,
+  questions_thin_min_chars: 400,
+  prompt_versions: { terms: 'extract_terms_v2', questions: 'gen_questions_v3' },
   max_attempts: 3,
   stale_running_hours: 4,
 };
@@ -1215,101 +1224,53 @@ LOAD_SPEND_SQL = """SELECT
     SELECT sum(u.cost_usd) FROM psy.llm_usage u WHERE u.lecture_id = $4::uuid
   ), 0)::float8 AS spent_lecture_usd"""
 
-BUILD_QUESTIONS_JS = r"""const C = $('Run — Init Constants').first().json.constants;
+BUILD_QUESTIONS_JS = r"""__SUBTOPIC_LIB__
+const C = $('Run — Init Constants').first().json.constants;
 const L = $('Load — Lecture').first().json;
-const T = $('LLM — Parse Terms').first().json;
-const sub = items[0].json;
+const T = $('LLM — Merge Thin Subtopics').item.json;
+const spend = items[0].json;
+const loopSub = $('Run — Loop Subtopics').item.json;
+const runIndex = typeof $runIndex === 'number' ? $runIndex : 0;
+const sub = {
+  ...loopSub,
+  ...spend,
+  subtopic_id: spend.subtopic_id || loopSub.subtopic_id || loopSub.id,
+  ordinal: Number(spend.ordinal != null ? spend.ordinal : loopSub.ordinal),
+  title: spend.title || loopSub.title,
+};
 const SYSTEM = __SYS_Q__;
 const cpt = C.chars_per_token || 2;
 const est = (s) => Math.ceil(String(s || '').length / cpt);
 
-const norm = (s) => String(s || '').toLowerCase().replace(/ё/g, 'е');
-function stems(phrase) {
-  return norm(phrase)
-    .split(/[^а-яa-z0-9]+/)
-    .filter((w) => w.length >= 4)
-    .map((w) => w.slice(0, Math.max(4, w.length - 2)));
-}
-function matcher(names) {
-  const sets = names.map(stems).filter((s) => s.length);
-  const plain = names.map(norm).filter((p) => p && p.length < 4);
-  return (text) => {
-    const t = norm(text);
-    if (sets.some((set) => set.every((s) => t.includes(s)))) return true;
-    return plain.some((p) => t.includes(p));
-  };
-}
+const parts = buildQuestionsRequestParts({
+  subtopic: { ordinal: sub.ordinal, title: sub.title },
+  allTerms: T.terms || [],
+  konspektMd: L.konspekt_md,
+  chunks: L.chunks,
+  constants: C,
+});
 
-const subTerms = T.terms.filter((t) => t.subtopic_ordinal === sub.ordinal && t.definition);
 const base = {
+  ...spend,
   lecture_id: L.lecture_id,
   job_id: L.job_id,
   course_id: L.course_id,
   subtopic_id: sub.subtopic_id,
   ordinal: sub.ordinal,
   title: sub.title,
-  spent_month_usd: Number(sub.spent_month_usd) || 0,
-  spent_lecture_usd: Number(sub.spent_lecture_usd) || 0,
-  term_canonicals: subTerms.map((t) => t.canonical),
+  spent_month_usd: Number(spend.spent_month_usd) || 0,
+  spent_lecture_usd: Number(spend.spent_lecture_usd) || 0,
+  term_canonicals: parts.term_canonicals,
+  terms_fallback: parts.terms_fallback,
   existing_stems: [],
   step: 'questions',
   prompt_version: C.prompt_versions.questions,
+  loop_run_index: runIndex,
+  skip: false,
+  skip_reason: null,
 };
-if (!subTerms.length) {
-  return [{ json: { ...base, skip: true, budget_exceeded: false, skip_reason: 'no_terms_with_definition' }, pairedItem: 0 }];
-}
 
-// --- konspekt fragment: sections that mention the subtopic's terms / title words
-const konspekt = String(L.konspekt_md || '').trim();
-const termNames = subTerms.flatMap((t) => [t.canonical].concat(t.aliases || []));
-const termMatch = matcher(termNames);
-const titleStems = stems(sub.title);
-const sections = konspekt.split(/\n(?=##\s)/);
-const scored = sections.map((text, idx) => {
-  const t = norm(text);
-  let score = subTerms.filter((st) => matcher([st.canonical].concat(st.aliases || []))(text)).length * 2;
-  score += titleStems.filter((s) => t.includes(s)).length;
-  return { idx, text, score };
-});
-let picked = scored.filter((s) => s.score > 0).sort((a, b) => b.score - a.score).slice(0, 3).sort((a, b) => a.idx - b.idx);
-let konspektFragment = picked.length ? picked.map((s) => s.text).join('\n\n') : konspekt;
-if (konspektFragment.length > 12000) konspektFragment = konspektFragment.slice(0, 12000);
-
-// --- transcript fragment: segments mentioning the terms (+/- 1 neighbour), capped
-let segs = (Array.isArray(L.chunks) ? L.chunks : []).map((c) => String((c && c.text) || '').trim());
-if (!segs.filter(Boolean).length) {
-  const tr = String(L.transcript || '');
-  segs = [];
-  for (let i = 0; i < tr.length; i += 1000) segs.push(tr.slice(i, i + 1000));
-}
-const hit = new Set();
-segs.forEach((text, i) => {
-  if (text && termMatch(text)) {
-    hit.add(i);
-    if (i > 0) hit.add(i - 1);
-    if (i + 1 < segs.length) hit.add(i + 1);
-  }
-});
-const order = Array.from(hit).sort((a, b) => a - b);
-const parts = [];
-let used = 0;
-for (const i of order) {
-  const text = segs[i];
-  if (!text) continue;
-  if (used + text.length > C.questions_transcript_max_chars) break;
-  parts.push(text);
-  used += text.length + 1;
-}
-const transcriptFragment = parts.length ? parts.join('\n') : '[фрагмент не найден — опирайся только на конспект]';
-
-const termsBlock = subTerms.map((t) => '- ' + t.canonical + ': ' + t.definition).join('\n');
-const user = [
-  'ПОДТЕМА\n' + sub.ordinal + '. ' + sub.title,
-  'ТЕРМИНЫ\n' + termsBlock,
-  'ФРАГМЕНТ КОНСПЕКТА\n' + konspektFragment,
-  'ФРАГМЕНТ ТРАНСКРИПТА\n' + transcriptFragment,
-].join('\n\n');
-
+const user = parts.user_base;
 const P = C.prices_usd_per_1m;
 const inTokens = est(SYSTEM) + est(user);
 const projected = (inTokens * P.miss + C.est_output_tokens_questions * P.out) / 1e6;
@@ -1324,15 +1285,15 @@ if (base.spent_lecture_usd + projected > lectureCap) {
     + ' (потрачено ' + base.spent_month_usd.toFixed(4) + ')';
 }
 if (reason) {
-  return [{ json: { ...base, skip: false, budget_exceeded: true, error_message: reason }, pairedItem: 0 }];
+  return [{ json: { ...base, budget_exceeded: true, error_message: reason }, pairedItem: 0 }];
 }
 return [{
   json: {
     ...base,
-    skip: false,
     budget_exceeded: false,
     est_input_tokens: inTokens,
     user_base: user,
+    konspekt_fragment_chars: (parts.konspekt_fragment || '').length,
     request_body: {
       model: C.llm_model,
       messages: [
@@ -1349,8 +1310,31 @@ return [{
   pairedItem: 0,
 }];"""
 
+MERGE_THIN_JS = r"""__SUBTOPIC_LIB__
+const item = items[0].json;
+const L = $('Load — Lecture').first().json;
+const C = $('Run — Init Constants').first().json.constants;
+const merged = mergeThinSubtopics(
+  item.subtopics || [],
+  item.terms || [],
+  L.konspekt_md || '',
+  {
+    thinMinChars: C.questions_thin_min_chars,
+    konspektMaxChars: C.questions_konspekt_max_chars,
+  },
+);
+return [{
+  json: {
+    ...item,
+    subtopics: merged.subtopics,
+    terms: merged.terms,
+    thin_merges: merged.merges,
+  },
+  pairedItem: 0,
+}];"""
+
 PARSE_QUESTIONS_JS = r"""const C = $('Run — Init Constants').first().json.constants;
-const b = $('__META_NODE__').first().json;
+const b = $('__META_NODE__').item.json;
 __PARSE_FN__
 __VALIDATOR__
 
@@ -1421,14 +1405,15 @@ FINALIZE_Q_JS = r"""function finalizeQuestions(list, cap) {
 }"""
 
 DECIDE_Q_JS = r"""const C = $('Run — Init Constants').first().json.constants;
-const b = $('LLM — Build Questions Request').first().json;
-const p = $('LLM — Parse Questions').first().json;
+const b = $('LLM — Build Questions Request').item.json;
+const p = $('LLM — Parse Questions').item.json;
 __FINALIZE__
 const target = C.questions_target;
 const valid = p.valid_questions || [];
 const soft = new Set(['lt_10_questions', 'shortfall_true']);
 const errs = (p.errors || []).filter((e) => !soft.has(e));
 const base = {
+  ...b,
   lecture_id: b.lecture_id,
   job_id: b.job_id,
   course_id: b.course_id,
@@ -1442,6 +1427,7 @@ const base = {
   prompt_version: b.prompt_version,
   first_cost_usd: p.cost_exact,
   first_valid_count: valid.length,
+  loop_run_index: b.loop_run_index,
 };
 if (valid.length >= target) {
   return [{ json: { ...base, needs_retry: false, questions_json: JSON.stringify(finalizeQuestions(valid, C.max_questions_per_subtopic)), question_count: Math.min(valid.length, C.max_questions_per_subtopic) }, pairedItem: 0 }];
@@ -1486,13 +1472,14 @@ return [{
 }];"""
 
 MERGE_RETRY_JS = r"""const C = $('Run — Init Constants').first().json.constants;
-const d = $('LLM — Decide Questions').first().json;
-const r = $('LLM — Parse Questions Retry').first().json;
+const d = $('LLM — Decide Questions').item.json;
+const r = $('LLM — Parse Questions Retry').item.json;
 __FINALIZE__
 const merged = (d.first_valid || []).concat(r.valid_questions || []);
 const finalList = finalizeQuestions(merged, C.max_questions_per_subtopic);
 return [{
   json: {
+    ...d,
     lecture_id: d.lecture_id,
     job_id: d.job_id,
     course_id: d.course_id,
@@ -1634,6 +1621,7 @@ FAIL_EXTRA_05 = r"""if (e.budget_exceeded === true) {
   message = 'cards exist, regenerate refused';
 } else if (e.konspekt_md !== undefined && !String(e.konspekt_md || '').trim() && !e.error) {
   permanent = true;
+  keepLecture = true;
   message = 'empty_konspekt: у лекции нет конспекта, LLM не вызывался';
 }"""
 
@@ -1642,13 +1630,14 @@ def build_psy_05() -> tuple[str, list, dict]:
     nodes: list = []
     conn: dict = {}
     sys_terms = js_literal(load_system_prompt("extract_terms_v2.md"))
-    sys_q = js_literal(load_system_prompt("gen_questions_v2.md"))
+    sys_q = js_literal(load_system_prompt("gen_questions_v3.md"))
     validator = load_validator_js()
+    subtopic_lib = load_subtopic_questions_js()
 
     nodes.append(sticky("NOTE — In", "## In\nManual + Execute (passthrough). Lower-only overrides: `max_cost_usd_per_lecture`, `monthly_budget_usd`. Inactive.", -40, 40, 360, 140))
     nodes.append(sticky("NOTE — Run/Load", "## Run / Load\nBackfill `terms` jobs for `konspekt_ready` → claim `terms`. Refuse when cards already exist for the lecture (no LLM).", 380, 40, 460, 140))
-    nodes.append(sticky("NOTE — LLM", "## LLM\n`extract_terms_v2` → upsert terms/subtopics → per subtopic `gen_questions_v2` (validate inline; one fix/top-up retry; partial success + `short_questions`).", 1000, 40, 560, 160))
-    nodes.append(sticky("NOTE — DB/Fin", "## DB / Fin\nUpsert questions by (subtopic_id, ordinal_in_subtopic) WHERE kind='life_mcq'. Job done + lecture `questions_ready`; counters incl. `short_questions` in jobs.payload.", 3100, 40, 480, 160))
+    nodes.append(sticky("NOTE — LLM", "## LLM\n`extract_terms_v2` → merge thin subtopics → upsert → per subtopic `gen_questions_v3` (fragment caps; fallback terms; one top-up; `short_questions`).", 1000, 40, 560, 160))
+    nodes.append(sticky("NOTE — DB/Fin", "## DB / Fin\nUpsert questions by (subtopic_id, ordinal_in_subtopic) WHERE kind='life_mcq'. Job done + lecture `questions_ready`; counters incl. `short_questions` in jobs.payload. empty_konspekt keeps lecture status.", 3100, 40, 480, 160))
 
     n_manual = manual_trigger(0, 300)
     n_exec = exec_trigger(0, 480)
@@ -1706,35 +1695,41 @@ def build_psy_05() -> tuple[str, list, dict]:
         140,
     )
     n_terms_ok = iff("LLM — Terms OK", "={{ String($json.ok) }}", "true", 3080, 140, "equals")
+    n_merge_thin = code(
+        "LLM — Merge Thin Subtopics",
+        sub_code(MERGE_THIN_JS, SUBTOPIC_LIB=subtopic_lib),
+        3180,
+        140,
+    )
     n_up_terms = pg(
         "DB — Upsert Terms",
         UPSERT_TERMS_SQL,
-        3080,
+        3400,
         140,
         """={{ [
   $('Load — Lecture').first().json.course_id,
   $('Load — Lecture').first().json.lecture_id,
-  JSON.stringify($('LLM — Parse Terms').first().json.terms)
+  JSON.stringify($('LLM — Merge Thin Subtopics').first().json.terms)
 ] }}""",
     )
     n_up_subs = pg(
         "DB — Upsert Subtopics",
         UPSERT_SUBTOPICS_SQL,
-        3300,
+        3620,
         140,
         """={{ [
   $('Load — Lecture').first().json.lecture_id,
-  JSON.stringify($('LLM — Parse Terms').first().json.subtopics)
+  JSON.stringify($('LLM — Merge Thin Subtopics').first().json.subtopics)
 ] }}""",
     )
-    n_loop = splitter("Run — Loop Subtopics", 3520, 140)
+    n_loop = splitter("Run — Loop Subtopics", 3840, 140)
     n_spend = pg(
         "DB — Load Spend",
         LOAD_SPEND_SQL,
-        3740,
+        4060,
         220,
         """={{ [
-  $json.subtopic_id,
+  $json.subtopic_id || $json.id,
   $json.ordinal,
   $json.title,
   $('Load — Lecture').first().json.lecture_id
@@ -1742,8 +1737,8 @@ def build_psy_05() -> tuple[str, list, dict]:
     )
     n_build_q = code(
         "LLM — Build Questions Request",
-        sub_code(BUILD_QUESTIONS_JS, SYS_Q=sys_q),
-        3960,
+        sub_code(BUILD_QUESTIONS_JS, SYS_Q=sys_q, SUBTOPIC_LIB=subtopic_lib),
+        4280,
         220,
     )
     n_budget_q = iff("LLM — Budget OK Questions", "={{ String($json.budget_exceeded) }}", "false", 4180, 220, "equals")
@@ -1804,32 +1799,32 @@ def build_psy_05() -> tuple[str, list, dict]:
     n_finish = pg(
         "DB — Finish Job",
         FINISH_JOB_SQL,
-        3740,
+        4060,
         0,
         """={{ [
   $('Load — Lecture').first().json.lecture_id,
   $('Run — Create Job').first().json.id,
   $('Run — Init Constants').first().json.constants.workflow_version,
-  $('LLM — Parse Terms').first().json.terms.length,
+  $('LLM — Merge Thin Subtopics').first().json.terms.length,
   JSON.stringify($('Run — Init Constants').first().json.constants.prompt_versions),
-  Boolean($('LLM — Parse Terms').first().json.transcript_truncated)
+  Boolean($('LLM — Merge Thin Subtopics').first().json.transcript_truncated)
 ] }}""",
     )
     n_finish["executeOnce"] = True
-    # layout: make room for LLM — Terms Ready
+    # Shift question-loop chain further right for the merge node.
     for n in (
-        n_up_terms, n_up_subs, n_loop, n_spend, n_build_q, n_budget_q, n_has_terms, n_http_q, n_parse_q,
-        n_log_q, n_decide, n_needs_retry, n_http_retry, n_parse_retry, n_log_retry, n_merge, n_up_q, n_finish,
+        n_budget_q, n_has_terms, n_http_q, n_parse_q,
+        n_log_q, n_decide, n_needs_retry, n_http_retry, n_parse_retry, n_log_retry, n_merge, n_up_q,
     ):
-        n["position"][0] += 220
+        n["position"][0] += 440
     n_fail_ctx, n_fail = fail_nodes(1980, 600, FAIL_EXTRA_05)
 
     nodes.extend([
         n_manual, n_exec, n_init, n_backfill, n_claim, n_has, n_lecture, n_no_cards, n_has_konspekt,
-        n_build_terms, n_budget_terms, n_http_terms, n_parse_terms, n_log_terms, n_terms_ready, n_terms_ok, n_up_terms,
-        n_up_subs, n_loop, n_spend, n_build_q, n_budget_q, n_has_terms, n_http_q, n_parse_q, n_log_q,
-        n_decide, n_needs_retry, n_http_retry, n_parse_retry, n_log_retry, n_merge, n_up_q, n_finish,
-        n_fail_ctx, n_fail,
+        n_build_terms, n_budget_terms, n_http_terms, n_parse_terms, n_log_terms, n_terms_ready, n_terms_ok,
+        n_merge_thin, n_up_terms, n_up_subs, n_loop, n_spend, n_build_q, n_budget_q, n_has_terms, n_http_q,
+        n_parse_q, n_log_q, n_decide, n_needs_retry, n_http_retry, n_parse_retry, n_log_retry, n_merge,
+        n_up_q, n_finish, n_fail_ctx, n_fail,
     ])
 
     link(conn, "In — Manual", "Run — Init Constants")
@@ -1851,8 +1846,9 @@ def build_psy_05() -> tuple[str, list, dict]:
     link(conn, "LLM — Parse Terms", "DB — Log Usage Terms")
     link(conn, "DB — Log Usage Terms", "LLM — Terms Ready")
     link(conn, "LLM — Terms Ready", "LLM — Terms OK")
-    link(conn, "LLM — Terms OK", "DB — Upsert Terms", 0)
+    link(conn, "LLM — Terms OK", "LLM — Merge Thin Subtopics", 0)
     link(conn, "LLM — Terms OK", "Fin — Fail Context", 1)
+    link(conn, "LLM — Merge Thin Subtopics", "DB — Upsert Terms")
     link(conn, "DB — Upsert Terms", "DB — Upsert Subtopics")
     link(conn, "DB — Upsert Subtopics", "Run — Loop Subtopics")
     link(conn, "Run — Loop Subtopics", "DB — Finish Job", 0)

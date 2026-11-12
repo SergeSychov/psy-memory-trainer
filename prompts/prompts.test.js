@@ -8,6 +8,7 @@ const FILES = [
   'extract_terms_v2.md',
   'gen_questions.md',
   'gen_questions_v2.md',
+  'gen_questions_v3.md',
   'explain_miss.md',
   'consolidate_quiz.md',
 ];
@@ -37,6 +38,7 @@ test('контракт полей, которые пишет n8n', () => {
   const termsV2 = fs.readFileSync(path.join(__dirname, 'extract_terms_v2.md'), 'utf8');
   const questions = fs.readFileSync(path.join(__dirname, 'gen_questions.md'), 'utf8');
   const questionsV2 = fs.readFileSync(path.join(__dirname, 'gen_questions_v2.md'), 'utf8');
+  const questionsV3 = fs.readFileSync(path.join(__dirname, 'gen_questions_v3.md'), 'utf8');
   const konspektV2 = fs.readFileSync(path.join(__dirname, 'konspekt_v2.md'), 'utf8');
   const miss = fs.readFileSync(path.join(__dirname, 'explain_miss.md'), 'utf8');
   const quiz = fs.readFileSync(path.join(__dirname, 'consolidate_quiz.md'), 'utf8');
@@ -49,6 +51,9 @@ test('контракт полей, которые пишет n8n', () => {
   assert.match(questions, /shortfall/);
   assert.match(questionsV2, /ДОБОР/);
   assert.match(questionsV2, /shortfall/);
+  assert.match(questionsV3, /fallback/i);
+  assert.match(questionsV3, /ДОБОР|добор/i);
+  assert.match(questionsV3, /shortfall/);
   assert.match(miss, /term_id/);
   assert.match(miss, /llm_usage/);
   assert.match(quiz, /need 3-4 topics/);
