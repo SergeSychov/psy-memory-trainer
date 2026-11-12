@@ -81,7 +81,7 @@ JSON-экспорт и `.id` файлы. Деплой: `python3 n8n/scripts/pull
 | Credentials | `psy Supabase (psy_n8n)`, `DeepSeek account` |
 | Промпты | `extract_terms_v2`, `gen_questions_v3`; валидатор + `subtopic_questions.js` встроены в Code при сборке |
 | Фрагменты | konspekt ≤ ~5.5k (секция ± сосед; miss-окно по позиции подтемы), transcript ≤ ~7k (хиты ±1; без chunks — нарезка transcript ~1k) |
-| Термины | цепочка definition: подтема → лекция → курс; если пусто — `skip_reason=no_terms_available`, DeepSeek не вызывается (`DB — Note No Terms`) |
+| Термины | цепочка definition: подтема → лекция → курс; пустой extract лекции **не** валит job, если есть `course_terms` (`LLM — Terms Ready` → `Run — Terms Proceed`); совсем пусто — `no_terms_available` / `DB — Note No Terms`, без DeepSeek |
 | Merge thin | только при совпавшей `##` и длине primary < 400; score 0 не сливает |
 | Идемпотентность | job `terms:<lecture_id>`; `subtopics` по `(lecture_id, ordinal)`; `glossary_terms` по `(course_id, canonical)`; `questions` по `(subtopic_id, ordinal_in_subtopic) WHERE kind='life_mcq'` |
 | Читает | `psy.jobs`, `psy.lectures`, `psy.lecture_texts`, `psy.chunks`, `psy.glossary_terms`, `psy.cards` (проверка), `psy.llm_usage` |
