@@ -37,7 +37,7 @@ DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
 
 WF_VER = {
     "psy_04": "psy_04_konspekt_v1",
-    "psy_05": "psy_05_terms_questions_v4",
+    "psy_05": "psy_05_terms_questions_v5",
 }
 
 # psy_03 lives in n8n already; id only used as sanity check / fallback when .id is missing.
@@ -1060,8 +1060,10 @@ return [{
   pairedItem: 0,
 }];"""
 
-PARSE_TERMS_JS = r"""const C = $('Run — Init Constants').first().json.constants;
+PARSE_TERMS_JS = r"""__SUBTOPIC_LIB__
+const C = $('Run — Init Constants').first().json.constants;
 const src = $('LLM — Build Terms Request').first().json;
+const L = $('Load — Lecture').first().json;
 __PARSE_FN__
 const p = parseDeepSeek(items[0].json, C, src, 'terms', C.prompt_versions.terms);
 
@@ -1113,56 +1115,17 @@ if (!data || typeof data !== 'object' || !Array.isArray(data.subtopics) || !Arra
   return fail('terms: schema (нужны subtopics[] и terms[])');
 }
 
-const subs = [];
-const seen = new Set();
-for (const s of data.subtopics) {
-  const ordinal = Number(s && s.ordinal);
-  const title = String((s && s.title) || '').trim();
-  if (!Number.isInteger(ordinal) || ordinal < 1 || !title || seen.has(ordinal)) continue;
-  seen.add(ordinal);
-  subs.push({ ordinal, title });
-}
-subs.sort((a, b) => a.ordinal - b.ordinal);
-// empty_subtopics is soft: Terms Ready / course fallback may synthesize a subtopic.
-// Do not Fail Context the whole lecture here.
-
-const byKey = new Map();
-for (const t of data.terms) {
-  const canonical = String((t && t.canonical) || '').trim();
-  if (!canonical) continue;
-  const aliases = Array.isArray(t.aliases)
-    ? t.aliases.map((a) => String(a || '').trim()).filter((a) => a && a !== canonical)
-    : [];
-  let definition = t.definition == null ? null : String(t.definition).trim() || null;
-  let lifeExample = definition && t.life_example != null ? String(t.life_example).trim() || null : null;
-  let so = Number(t.subtopic_ordinal);
-  if (!seen.has(so)) {
-    const lower = subs.filter((s) => s.ordinal <= so).pop();
-    so = lower ? lower.ordinal : subs[0].ordinal;
-  }
-  const key = canonical.toLowerCase();
-  if (byKey.has(key)) {
-    const prev = byKey.get(key);
-    prev.aliases = Array.from(new Set(prev.aliases.concat(aliases)));
-    if (!prev.definition && definition) {
-      prev.definition = definition;
-      prev.life_example = lifeExample;
-    }
-    continue;
-  }
-  byKey.set(key, { canonical, aliases: Array.from(new Set(aliases)), definition, life_example: lifeExample, subtopic_ordinal: so });
-}
-const terms = Array.from(byKey.values());
-// empty_terms is soft when subtopics exist (or even when not): course glossary
-// fallback is applied in LLM — Terms Ready via finalizeTermsExtractGate.
+// empty_subtopics is soft: synthesize before binding terms (avoids TypeError on
+// subs[0] when terms exist). Course fallback / no_terms stay in Terms Ready.
+const norm = normalizeTermsExtract(data, { lectureTitle: L.title || '' });
 result.ok = true;
-result.subtopics = subs;
-result.terms = terms;
-result.lecture_terms_empty = terms.length === 0;
-if (!subs.length) {
+result.subtopics = norm.subtopics;
+result.terms = norm.terms;
+result.lecture_terms_empty = norm.lecture_terms_empty;
+if (norm.synthesizedSubtopic) {
   result.error_message = 'terms: empty_subtopics';
 }
-if (!terms.length) {
+if (!norm.terms.length) {
   result.error_message = result.error_message || 'terms: empty_terms';
 }
 return [{ json: result, pairedItem: 0 }];"""
@@ -1667,6 +1630,11 @@ FAIL_EXTRA_05 = r"""if (e.budget_exceeded === true) {
   permanent = true;
   keepLecture = true;
   message = 'empty_konspekt: у лекции нет конспекта, LLM не вызывался';
+} else if (e.hard_parse_error === true || e.proceed === false) {
+  // Temporary terms-extract failure: retry (not attempts=3), keep lecture status.
+  permanent = false;
+  keepLecture = true;
+  message = e.error_message || e.gate_reason || 'terms_extract_failed';
 }"""
 
 
@@ -1680,7 +1648,7 @@ def build_psy_05() -> tuple[str, list, dict]:
 
     nodes.append(sticky("NOTE — In", "## In\nManual + Execute (passthrough). Lower-only overrides: `max_cost_usd_per_lecture`, `monthly_budget_usd`. Inactive.", -40, 40, 360, 140))
     nodes.append(sticky("NOTE — Run/Load", "## Run / Load\nBackfill `terms` jobs for `konspekt_ready` → claim `terms`. Refuse when cards already exist for the lecture (no LLM).", 380, 40, 460, 140))
-    nodes.append(sticky("NOTE — LLM", "## LLM\n`extract_terms_v2` → Terms Ready gate (course fallback) → merge thin → upsert → `gen_questions_v3`; empty lecture terms no longer Fail Context.", 1000, 40, 560, 180))
+    nodes.append(sticky("NOTE — LLM", "## LLM\n`extract_terms_v2` → Terms Ready gate: soft empty extract → course fallback; hard parse → Fail Context (retry). Then merge / MCQ.", 1000, 40, 560, 180))
     nodes.append(sticky("NOTE — DB/Fin", "## DB / Fin\nUpsert questions by (subtopic_id, ordinal_in_subtopic) WHERE kind='life_mcq'. Job done + lecture `questions_ready`; counters incl. `short_questions` in jobs.payload. empty_konspekt keeps lecture status.", 3100, 40, 480, 160))
 
     n_manual = manual_trigger(0, 300)
@@ -1727,7 +1695,7 @@ def build_psy_05() -> tuple[str, list, dict]:
     n_http_terms = deepseek("Shared — DeepSeek Terms", 2200, 140)
     n_parse_terms = code(
         "LLM — Parse Terms",
-        sub_code(PARSE_TERMS_JS, PARSE_FN=PARSE_DEEPSEEK_JS),
+        sub_code(PARSE_TERMS_JS, PARSE_FN=PARSE_DEEPSEEK_JS, SUBTOPIC_LIB=subtopic_lib),
         2420,
         140,
     )
@@ -1755,7 +1723,9 @@ return [{
     terms: gate.terms,
     lecture_terms_empty: gate.lecture_terms_empty,
     course_fallback: gate.course_fallback,
+    hard_parse_error: gate.hard_parse_error,
     gate_reason: gate.reason,
+    error_message: gate.proceed ? parsed.error_message : (gate.reason || parsed.error_message),
   },
   pairedItem: 0,
 }];""",
@@ -1764,8 +1734,7 @@ return [{
         2860,
         140,
     )
-    # proceed is always true after gate (course fallback / synthetic subtopic);
-    # keep IF so hard surprises still have a Fail path without blocking course fallback.
+    # proceed=false on hard parse → Fin — Fail Context (retryable, keep_lecture).
     n_terms_ok = iff("Run — Terms Proceed", "={{ String($json.proceed) }}", "true", 3080, 140, "equals")
     n_merge_thin = code(
         "LLM — Merge Thin Subtopics",

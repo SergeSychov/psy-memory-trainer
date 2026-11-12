@@ -9,6 +9,7 @@ const {
   resolveTermsForSubtopic,
   mergeThinSubtopics,
   buildQuestionsRequestParts,
+  normalizeTermsExtract,
   finalizeTermsExtractGate,
   missWindowCenter,
   DEFAULTS,
@@ -125,24 +126,64 @@ test('transcript miss window centers by subtopic position, not document middle',
   assert.notEqual(first.text, last.text);
 });
 
-test('finalizeTermsExtractGate proceeds when lecture terms empty but course has definitions', () => {
+test('normalizeTermsExtract: empty subtopics + terms → synthesize, bind, no throw', () => {
+  const out = normalizeTermsExtract(
+    {
+      subtopics: [],
+      terms: [
+        {
+          canonical: 'окно внимания',
+          aliases: ['окно'],
+          definition: 'отрезок фокуса',
+          life_example: 'на кухне',
+          subtopic_ordinal: 3,
+        },
+      ],
+    },
+    { lectureTitle: 'Лекция без подтем' },
+  );
+  assert.equal(out.synthesizedSubtopic, true);
+  assert.equal(out.subtopics.length, 1);
+  assert.equal(out.subtopics[0].ordinal, 1);
+  assert.equal(out.subtopics[0].title, 'Лекция без подтем');
+  assert.equal(out.terms.length, 1);
+  assert.equal(out.terms[0].subtopic_ordinal, 1);
+  assert.equal(out.lecture_terms_empty, false);
+});
+
+test('normalizeTermsExtract: keeps real subtopics and does not synthesize', () => {
+  const out = normalizeTermsExtract(
+    {
+      subtopics: [{ ordinal: 2, title: 'Якорь' }],
+      terms: [{ canonical: 'якорь', definition: 'жест', subtopic_ordinal: 2 }],
+    },
+    { lectureTitle: 'Игнор' },
+  );
+  assert.equal(out.synthesizedSubtopic, false);
+  assert.equal(out.subtopics.length, 1);
+  assert.equal(out.subtopics[0].title, 'Якорь');
+  assert.equal(out.terms[0].subtopic_ordinal, 2);
+});
+
+test('finalizeTermsExtractGate: soft empty terms + course → proceed with course_fallback', () => {
   const gate = finalizeTermsExtractGate({
-    parseOk: false,
+    parseOk: true,
     errorMessage: 'terms: empty_terms',
-    subtopics: [{ ordinal: 1, title: 'Окно' }],
+    subtopics: [{ ordinal: 1, title: 'Окно' }, { ordinal: 2, title: 'Якорь' }],
     terms: [],
     courseTerms: [{ canonical: 'курс-термин', definition: 'из курса' }],
     lectureTitle: 'Лекция X',
   });
   assert.equal(gate.proceed, true);
   assert.equal(gate.course_fallback, true);
-  assert.equal(gate.subtopics.length, 1);
+  assert.equal(gate.hard_parse_error, false);
+  assert.equal(gate.subtopics.length, 2);
   assert.equal(gate.reason, 'course_terms_fallback');
 });
 
-test('finalizeTermsExtractGate does not Fail-Context when no terms anywhere', () => {
+test('finalizeTermsExtractGate: soft empty everywhere → synthetic subtopic, no_terms_available', () => {
   const gate = finalizeTermsExtractGate({
-    parseOk: false,
+    parseOk: true,
     errorMessage: 'terms: empty_terms',
     subtopics: [],
     terms: [],
@@ -150,8 +191,26 @@ test('finalizeTermsExtractGate does not Fail-Context when no terms anywhere', ()
     lectureTitle: 'Синтетика',
   });
   assert.equal(gate.proceed, true);
+  assert.equal(gate.course_fallback, false);
   assert.equal(gate.subtopics.length, 1);
   assert.equal(gate.subtopics[0].title, 'Синтетика');
+  assert.equal(gate.reason, 'no_terms_available');
+});
+
+test('finalizeTermsExtractGate: hard parse → proceed=false, no synthetic, no course fallback', () => {
+  const gate = finalizeTermsExtractGate({
+    parseOk: false,
+    errorMessage: 'terms: invalid_json',
+    subtopics: [{ ordinal: 1, title: 'Не должны подставиться' }],
+    terms: [],
+    courseTerms: [{ canonical: 'курс-термин', definition: 'из курса' }],
+    lectureTitle: 'Лекция X',
+  });
+  assert.equal(gate.proceed, false);
+  assert.equal(gate.hard_parse_error, true);
+  assert.equal(gate.course_fallback, false);
+  assert.deepEqual(gate.subtopics, []);
+  assert.match(String(gate.reason), /invalid_json/);
 });
 
 test('resolveTermsForSubtopic: subtopic → lecture → course', () => {

@@ -303,9 +303,82 @@ function mergeThinSubtopics(subtopics, terms, konspekt, opts = {}) {
 }
 
 /**
+ * Normalize extract_terms JSON payload (subtopics + terms).
+ * If LLM returned no valid subtopics, synthesize one from lectureTitle
+ * BEFORE binding terms — otherwise `subs[0]` throws and the job stays running.
+ *
+ * Does not set parseOk/fail: caller still owns schema/json errors.
+ */
+function normalizeTermsExtract(data, opts) {
+  const lectureTitle = String((opts && opts.lectureTitle) || '').trim() || 'Лекция';
+  const subs = [];
+  const seen = new Set();
+  for (const s of (data && data.subtopics) || []) {
+    const ordinal = Number(s && s.ordinal);
+    const title = String((s && s.title) || '').trim();
+    if (!Number.isInteger(ordinal) || ordinal < 1 || !title || seen.has(ordinal)) continue;
+    seen.add(ordinal);
+    subs.push({ ordinal, title });
+  }
+  subs.sort((a, b) => a.ordinal - b.ordinal);
+
+  let synthesizedSubtopic = false;
+  if (!subs.length) {
+    subs.push({ ordinal: 1, title: lectureTitle });
+    seen.add(1);
+    synthesizedSubtopic = true;
+  }
+
+  const byKey = new Map();
+  for (const t of (data && data.terms) || []) {
+    const canonical = String((t && t.canonical) || '').trim();
+    if (!canonical) continue;
+    const aliases = Array.isArray(t.aliases)
+      ? t.aliases.map((a) => String(a || '').trim()).filter((a) => a && a !== canonical)
+      : [];
+    let definition = t.definition == null ? null : String(t.definition).trim() || null;
+    let lifeExample = definition && t.life_example != null ? String(t.life_example).trim() || null : null;
+    let so = Number(t.subtopic_ordinal);
+    if (!seen.has(so)) {
+      const lower = subs.filter((s) => s.ordinal <= so).pop();
+      so = lower ? lower.ordinal : subs[0].ordinal;
+    }
+    const key = canonical.toLowerCase();
+    if (byKey.has(key)) {
+      const prev = byKey.get(key);
+      prev.aliases = Array.from(new Set(prev.aliases.concat(aliases)));
+      if (!prev.definition && definition) {
+        prev.definition = definition;
+        prev.life_example = lifeExample;
+      }
+      continue;
+    }
+    byKey.set(key, {
+      canonical,
+      aliases: Array.from(new Set(aliases)),
+      definition,
+      life_example: lifeExample,
+      subtopic_ordinal: so,
+    });
+  }
+  const terms = Array.from(byKey.values());
+  return {
+    subtopics: subs,
+    terms,
+    synthesizedSubtopic,
+    lecture_terms_empty: terms.length === 0,
+  };
+}
+
+/**
  * After extract_terms: decide whether to enter the subtopic loop.
- * Empty lecture terms must not fail the lecture when course glossary has definitions
- * (or when we can still synthesize a single subtopic for no_terms_available).
+ *
+ * Soft (proceed=true): parseOk=true with empty lecture terms and/or empty subtopics.
+ *   - course glossary has definitions → keep/synthesize subtopics, course_fallback.
+ *   - nowhere defined → synthesize one subtopic only if list empty → no_terms_available.
+ *
+ * Hard (proceed=false): parseOk=false (invalid_json / llm_truncated / empty / schema).
+ *   → Fail Context (retryable). No synthetic subtopic, no course MCQ.
  */
 function finalizeTermsExtractGate(input) {
   const {
@@ -323,41 +396,43 @@ function finalizeTermsExtractGate(input) {
     .filter((s) => s.ordinal >= 1 && s.title)
     .sort((a, b) => a.ordinal - b.ordinal);
 
+  // Hard parse failure → Fail Context (retryable). Do not invent a subtopic
+  // (would wipe real ones on regenerate) and do not hide the error behind course MCQ.
+  if (!parseOk) {
+    return {
+      proceed: false,
+      subtopics: [],
+      terms: [],
+      reason: errorMessage || 'terms_extract_failed',
+      lecture_terms_empty: true,
+      course_fallback: false,
+      hard_parse_error: true,
+    };
+  }
+
+  const lectureTermsEmpty = !(terms || []).length;
+  let reason = null;
+  let courseFallback = false;
+
   if (!subs.length) {
     subs = [{ ordinal: 1, title }];
   }
 
-  // Hard parse failure without any course fallback → still enter loop with synthetic
-  // subtopic so MCQ path can emit no_terms_available (usage 0), not Fail Context.
-  if (parseOk) {
-    return {
-      proceed: true,
-      subtopics: subs,
-      terms: terms || [],
-      reason: null,
-      lecture_terms_empty: !(terms || []).length,
-      course_fallback: false,
-    };
-  }
-
-  if (courseDefined.length) {
-    return {
-      proceed: true,
-      subtopics: subs,
-      terms: terms || [],
-      reason: 'course_terms_fallback',
-      lecture_terms_empty: true,
-      course_fallback: true,
-    };
+  if (lectureTermsEmpty && courseDefined.length) {
+    courseFallback = true;
+    reason = 'course_terms_fallback';
+  } else if (lectureTermsEmpty && !courseDefined.length) {
+    reason = 'no_terms_available';
   }
 
   return {
     proceed: true,
     subtopics: subs,
     terms: terms || [],
-    reason: errorMessage || 'no_terms_available',
-    lecture_terms_empty: true,
-    course_fallback: false,
+    reason,
+    lecture_terms_empty: lectureTermsEmpty,
+    course_fallback: courseFallback,
+    hard_parse_error: false,
   };
 }
 
@@ -454,6 +529,7 @@ module.exports = {
   termsWithDefinition,
   resolveTermsForSubtopic,
   mergeThinSubtopics,
+  normalizeTermsExtract,
   finalizeTermsExtractGate,
   buildQuestionsRequestParts,
 };
