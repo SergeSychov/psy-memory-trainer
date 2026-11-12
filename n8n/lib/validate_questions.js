@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Validate gen_questions_v2 JSON for one subtopic.
+ * Validate gen_questions JSON for one subtopic (psy_05 / gen_questions_v3+).
  * Pure function — no I/O. Used from n8n Code node and node:test.
  */
 

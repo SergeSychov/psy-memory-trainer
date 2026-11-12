@@ -10,6 +10,7 @@ const DEFAULTS = {
   transcriptMaxChars: 7000,
   thinMinChars: 400,
   titleTokenMinLen: 5,
+  transcriptChunkChars: 1000,
 };
 
 function norm(s) {
@@ -38,7 +39,6 @@ function scoreSection(sectionText, title, terms) {
   for (const tok of tokens) {
     if (t.includes(tok)) score += 3;
   }
-  // Prefer heading that starts with the title words
   const heading = (sectionText.split('\n')[0] || '');
   const h = norm(heading);
   if (tokens.length && tokens.every((tok) => h.includes(tok))) score += 8;
@@ -51,11 +51,27 @@ function scoreSection(sectionText, title, terms) {
   return score;
 }
 
+function missWindowCenter(sectionsLength, opts = {}) {
+  if (sectionsLength <= 0) return 0;
+  const idx = opts.subtopicIndex;
+  const count = opts.subtopicCount;
+  if (idx == null || count == null || count < 1) {
+    return Math.min(sectionsLength - 1, Math.max(0, Math.floor(sectionsLength / 2)));
+  }
+  const i = Math.min(Math.max(Number(idx) || 0, 0), Math.max(count - 1, 0));
+  if (count <= 1 || sectionsLength <= 1) return 0;
+  return Math.min(
+    sectionsLength - 1,
+    Math.max(0, Math.round((i / (count - 1)) * (sectionsLength - 1))),
+  );
+}
+
 /**
  * Pick konspekt fragment for one subtopic: best matching ## section ± neighbour,
  * capped. Never falls back to the whole konspekt.
+ * opts: { subtopicIndex, subtopicCount } — center miss-window by subtopic position.
  */
-function pickKonspektFragment(konspekt, title, terms, maxChars = DEFAULTS.konspektMaxChars) {
+function pickKonspektFragment(konspekt, title, terms, maxChars = DEFAULTS.konspektMaxChars, opts = {}) {
   const sections = sectionList(konspekt);
   if (!sections.length) {
     return { text: '', matched: false, score: 0 };
@@ -68,11 +84,7 @@ function pickKonspektFragment(konspekt, title, terms, maxChars = DEFAULTS.konspe
   scored.sort((a, b) => b.score - a.score || a.idx - b.idx);
   const best = scored[0];
   if (!best || best.score <= 0) {
-    // No match: take a short window around the ordinal-ish position, not the whole doc.
-    const approx = Math.min(
-      sections.length - 1,
-      Math.max(0, Math.floor(sections.length / 2)),
-    );
+    const approx = missWindowCenter(sections.length, opts);
     const window = [sections[approx]];
     if (approx > 0) window.unshift(sections[approx - 1]);
     if (approx + 1 < sections.length) window.push(sections[approx + 1]);
@@ -88,7 +100,6 @@ function pickKonspektFragment(konspekt, title, terms, maxChars = DEFAULTS.konspe
     .map((i) => sections[i])
     .join('\n\n');
   if (text.length > maxChars) {
-    // Prefer keeping the best section fully, then trim.
     const primary = sections[best.idx];
     if (primary.length >= maxChars) {
       text = primary.slice(0, maxChars);
@@ -114,13 +125,32 @@ function textMatches(haystack, title, terms) {
   return false;
 }
 
-/**
- * Transcript: only matching segments ±1 neighbour, capped.
- */
-function pickTranscriptFragment(chunks, title, terms, maxChars = DEFAULTS.transcriptMaxChars) {
+function transcriptToSegments(chunks, transcript, chunkChars = DEFAULTS.transcriptChunkChars) {
   let segs = (Array.isArray(chunks) ? chunks : [])
     .map((c) => String((c && c.text) || '').trim())
     .filter(Boolean);
+  if (segs.length) return segs;
+  const tr = String(transcript || '');
+  if (!tr.trim()) return [];
+  segs = [];
+  for (let i = 0; i < tr.length; i += chunkChars) {
+    segs.push(tr.slice(i, i + chunkChars));
+  }
+  return segs;
+}
+
+/**
+ * Transcript: only matching segments ±1 neighbour, capped.
+ * If chunks empty, slice raw transcript into ~1000-char pieces first.
+ */
+function pickTranscriptFragment(
+  chunks,
+  title,
+  terms,
+  maxChars = DEFAULTS.transcriptMaxChars,
+  transcript = '',
+) {
+  const segs = transcriptToSegments(chunks, transcript);
   if (!segs.length) {
     return { text: '', matched: false };
   }
@@ -132,7 +162,16 @@ function pickTranscriptFragment(chunks, title, terms, maxChars = DEFAULTS.transc
       if (i + 1 < segs.length) hit.add(i + 1);
     }
   });
-  const order = Array.from(hit).sort((a, b) => a - b);
+  // No lexical hit: still return a positional window from synthetic segments
+  // so the model is not left with an empty transcript when text exists.
+  let order = Array.from(hit).sort((a, b) => a - b);
+  if (!order.length && segs.length) {
+    const mid = Math.min(segs.length - 1, Math.floor(segs.length / 2));
+    order = [mid];
+    if (mid > 0) order.unshift(mid - 1);
+    if (mid + 1 < segs.length) order.push(mid + 1);
+    order.sort((a, b) => a - b);
+  }
   const parts = [];
   let used = 0;
   for (const i of order) {
@@ -144,7 +183,7 @@ function pickTranscriptFragment(chunks, title, terms, maxChars = DEFAULTS.transc
   }
   return {
     text: parts.length ? parts.join('\n') : '',
-    matched: parts.length > 0,
+    matched: hit.size > 0,
   };
 }
 
@@ -157,25 +196,32 @@ function termsWithDefinition(terms) {
 }
 
 /**
- * Resolve term list for MCQ: prefer subtopic terms with definition;
- * else fall back to any lecture terms with definition (never empty skip).
+ * Resolve term list for MCQ:
+ * subtopic (with definition) → lecture → course glossary.
+ * Empty after the whole chain → no LLM.
  */
-function resolveTermsForSubtopic(ordinal, allTerms) {
-  const own = termsWithDefinition(termsForOrdinal(allTerms, ordinal));
+function resolveTermsForSubtopic(ordinal, lectureTerms, courseTerms = []) {
+  const own = termsWithDefinition(termsForOrdinal(lectureTerms, ordinal));
   if (own.length) {
-    return { terms: own, fallback: false };
+    return { terms: own, fallback: false, source: 'subtopic' };
   }
-  const lecture = termsWithDefinition(allTerms);
-  return { terms: lecture, fallback: lecture.length > 0 };
+  const lecture = termsWithDefinition(lectureTerms);
+  if (lecture.length) {
+    return { terms: lecture, fallback: true, source: 'lecture' };
+  }
+  const course = termsWithDefinition(courseTerms);
+  if (course.length) {
+    return { terms: course, fallback: true, source: 'course' };
+  }
+  return { terms: [], fallback: false, source: null };
 }
 
 /**
- * Merge subtopics whose konspekt fragment is thinner than thinMinChars into a neighbour.
- * Re-numbers ordinals 1..N and remaps term.subtopic_ordinal.
+ * Merge only when a matched primary ## section exists and its length (no neighbours) < thinMin.
+ * score 0 (no match) ≠ thin — leave the subtopic alone.
  */
 function mergeThinSubtopics(subtopics, terms, konspekt, opts = {}) {
   const thinMin = opts.thinMinChars != null ? opts.thinMinChars : DEFAULTS.thinMinChars;
-  const konspektMax = opts.konspektMaxChars != null ? opts.konspektMaxChars : DEFAULTS.konspektMaxChars;
   let list = (subtopics || [])
     .map((s) => ({ ordinal: Number(s.ordinal), title: String(s.title || '').trim() }))
     .filter((s) => s.ordinal >= 1 && s.title)
@@ -192,7 +238,6 @@ function mergeThinSubtopics(subtopics, terms, konspekt, opts = {}) {
     for (let i = 0; i < list.length; i++) {
       const sub = list[i];
       const ownTerms = termsForOrdinal(terms, sub.ordinal);
-      // Thinness = primary matched ## section alone (neighbours do not inflate).
       const sections = sectionList(konspekt);
       const scored = sections.map((text, idx) => ({
         idx,
@@ -200,10 +245,11 @@ function mergeThinSubtopics(subtopics, terms, konspekt, opts = {}) {
         score: scoreSection(text, sub.title, ownTerms),
       }));
       scored.sort((a, b) => b.score - a.score || a.idx - b.idx);
-      const primary = scored[0] && scored[0].score > 0 ? scored[0].text : '';
-      const primaryChars = primary.length;
+      // No matched section → not thin; do not merge.
+      if (!scored[0] || scored[0].score <= 0) continue;
+      const primaryChars = scored[0].text.length;
       if (primaryChars >= thinMin) continue;
-      // Merge into neighbour with more primary content (prefer previous, else next).
+
       let targetIdx = i > 0 ? i - 1 : i + 1;
       if (i > 0 && i + 1 < list.length) {
         const prevOwn = termsForOrdinal(terms, list[i - 1].ordinal);
@@ -241,7 +287,6 @@ function mergeThinSubtopics(subtopics, terms, konspekt, opts = {}) {
     }
   }
 
-  // Re-number ordinals densely and remap terms.
   const ordMap = new Map();
   list = list.map((s, idx) => {
     const neu = idx + 1;
@@ -258,38 +303,58 @@ function mergeThinSubtopics(subtopics, terms, konspekt, opts = {}) {
 }
 
 /**
- * Build the questions-request payload fields (no LLM). Never skips for missing subtopic terms.
+ * Build questions-request fields (no LLM).
+ * skip=true + skip_reason=no_terms_available when no defined terms in subtopic/lecture/course.
  */
 function buildQuestionsRequestParts(input) {
   const {
     subtopic,
     allTerms,
+    courseTerms = [],
     konspektMd,
     chunks,
+    transcript = '',
     constants = {},
+    subtopicIndex = null,
+    subtopicCount = null,
   } = input;
   const konspektMax = constants.questions_konspekt_max_chars || DEFAULTS.konspektMaxChars;
   const transcriptMax = constants.questions_transcript_max_chars || DEFAULTS.transcriptMaxChars;
 
-  const resolved = resolveTermsForSubtopic(subtopic.ordinal, allTerms);
+  const resolved = resolveTermsForSubtopic(subtopic.ordinal, allTerms, courseTerms);
+  if (!resolved.terms.length) {
+    return {
+      skip: true,
+      skip_reason: 'no_terms_available',
+      terms_fallback: false,
+      terms_source: null,
+      term_canonicals: [],
+      konspekt_fragment: '',
+      konspekt_matched: false,
+      transcript_fragment: '',
+      transcript_matched: false,
+      user_base: null,
+      request_ready: false,
+    };
+  }
+
   const termCanonicals = resolved.terms.map((t) => t.canonical);
   const konspektFrag = pickKonspektFragment(
     konspektMd,
     subtopic.title,
     resolved.terms,
     konspektMax,
+    { subtopicIndex, subtopicCount },
   );
   const transcriptFrag = pickTranscriptFragment(
     chunks,
     subtopic.title,
     resolved.terms,
     transcriptMax,
+    transcript,
   );
 
-  const termsBlock = resolved.terms.length
-    ? resolved.terms.map((t) => '- ' + t.canonical + ': ' + t.definition).join('\n')
-    : '- (нет терминов с определением — опирайся только на фрагмент конспекта; term_canonical не выдумывай)';
-
+  const termsBlock = resolved.terms.map((t) => '- ' + t.canonical + ': ' + t.definition).join('\n');
   const transcriptText = transcriptFrag.text
     || '[фрагмент не найден — опирайся только на конспект]';
 
@@ -304,12 +369,14 @@ function buildQuestionsRequestParts(input) {
     skip: false,
     skip_reason: null,
     terms_fallback: resolved.fallback,
+    terms_source: resolved.source,
     term_canonicals: termCanonicals,
     konspekt_fragment: konspektFrag.text,
     konspekt_matched: konspektFrag.matched,
     transcript_fragment: transcriptText,
     transcript_matched: transcriptFrag.matched,
     user_base: user,
+    request_ready: true,
   };
 }
 
@@ -319,7 +386,9 @@ module.exports = {
   titleTokens,
   sectionList,
   scoreSection,
+  missWindowCenter,
   pickKonspektFragment,
+  transcriptToSegments,
   pickTranscriptFragment,
   termsForOrdinal,
   termsWithDefinition,
