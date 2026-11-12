@@ -9,6 +9,7 @@ const {
   resolveTermsForSubtopic,
   mergeThinSubtopics,
   buildQuestionsRequestParts,
+  finalizeTermsExtractGate,
   missWindowCenter,
   DEFAULTS,
 } = require('./subtopic_questions');
@@ -102,6 +103,55 @@ test('pickTranscriptFragment falls back to slicing raw transcript without chunks
   ], 7000, long);
   assert.ok(frag.text.length > 0);
   assert.ok(frag.text.includes('якорь') || frag.text.length >= 1000);
+});
+
+test('transcript miss window centers by subtopic position, not document middle', () => {
+  const chunks = [
+    { text: 'сегмент-0-начало' },
+    { text: 'сегмент-1' },
+    { text: 'сегмент-2' },
+    { text: 'сегмент-3-конец' },
+  ];
+  const first = pickTranscriptFragment(chunks, 'Чужой заголовок', [], 7000, '', {
+    subtopicIndex: 0,
+    subtopicCount: 3,
+  });
+  const last = pickTranscriptFragment(chunks, 'Чужой заголовок', [], 7000, '', {
+    subtopicIndex: 2,
+    subtopicCount: 3,
+  });
+  assert.ok(first.text.includes('сегмент-0'));
+  assert.ok(last.text.includes('сегмент-3') || last.text.includes('сегмент-2'));
+  assert.notEqual(first.text, last.text);
+});
+
+test('finalizeTermsExtractGate proceeds when lecture terms empty but course has definitions', () => {
+  const gate = finalizeTermsExtractGate({
+    parseOk: false,
+    errorMessage: 'terms: empty_terms',
+    subtopics: [{ ordinal: 1, title: 'Окно' }],
+    terms: [],
+    courseTerms: [{ canonical: 'курс-термин', definition: 'из курса' }],
+    lectureTitle: 'Лекция X',
+  });
+  assert.equal(gate.proceed, true);
+  assert.equal(gate.course_fallback, true);
+  assert.equal(gate.subtopics.length, 1);
+  assert.equal(gate.reason, 'course_terms_fallback');
+});
+
+test('finalizeTermsExtractGate does not Fail-Context when no terms anywhere', () => {
+  const gate = finalizeTermsExtractGate({
+    parseOk: false,
+    errorMessage: 'terms: empty_terms',
+    subtopics: [],
+    terms: [],
+    courseTerms: [],
+    lectureTitle: 'Синтетика',
+  });
+  assert.equal(gate.proceed, true);
+  assert.equal(gate.subtopics.length, 1);
+  assert.equal(gate.subtopics[0].title, 'Синтетика');
 });
 
 test('resolveTermsForSubtopic: subtopic → lecture → course', () => {

@@ -37,7 +37,7 @@ DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
 
 WF_VER = {
     "psy_04": "psy_04_konspekt_v1",
-    "psy_05": "psy_05_terms_questions_v3",
+    "psy_05": "psy_05_terms_questions_v4",
 }
 
 # psy_03 lives in n8n already; id only used as sanity check / fallback when .id is missing.
@@ -1123,7 +1123,8 @@ for (const s of data.subtopics) {
   subs.push({ ordinal, title });
 }
 subs.sort((a, b) => a.ordinal - b.ordinal);
-if (!subs.length) return fail('terms: empty_subtopics');
+// empty_subtopics is soft: Terms Ready / course fallback may synthesize a subtopic.
+// Do not Fail Context the whole lecture here.
 
 const byKey = new Map();
 for (const t of data.terms) {
@@ -1152,11 +1153,18 @@ for (const t of data.terms) {
   byKey.set(key, { canonical, aliases: Array.from(new Set(aliases)), definition, life_example: lifeExample, subtopic_ordinal: so });
 }
 const terms = Array.from(byKey.values());
-if (!terms.length) return fail('terms: empty_terms');
-
+// empty_terms is soft when subtopics exist (or even when not): course glossary
+// fallback is applied in LLM — Terms Ready via finalizeTermsExtractGate.
 result.ok = true;
 result.subtopics = subs;
 result.terms = terms;
+result.lecture_terms_empty = terms.length === 0;
+if (!subs.length) {
+  result.error_message = 'terms: empty_subtopics';
+}
+if (!terms.length) {
+  result.error_message = result.error_message || 'terms: empty_terms';
+}
 return [{ json: result, pairedItem: 0 }];"""
 
 UPSERT_TERMS_SQL = """WITH params AS (
@@ -1672,7 +1680,7 @@ def build_psy_05() -> tuple[str, list, dict]:
 
     nodes.append(sticky("NOTE — In", "## In\nManual + Execute (passthrough). Lower-only overrides: `max_cost_usd_per_lecture`, `monthly_budget_usd`. Inactive.", -40, 40, 360, 140))
     nodes.append(sticky("NOTE — Run/Load", "## Run / Load\nBackfill `terms` jobs for `konspekt_ready` → claim `terms`. Refuse when cards already exist for the lecture (no LLM).", 380, 40, 460, 140))
-    nodes.append(sticky("NOTE — LLM", "## LLM\n`extract_terms_v2` → merge thin (matched ## only) → upsert → per subtopic `gen_questions_v3` (subtopic→lecture→course terms; `no_terms_available` skips DeepSeek).", 1000, 40, 560, 180))
+    nodes.append(sticky("NOTE — LLM", "## LLM\n`extract_terms_v2` → Terms Ready gate (course fallback) → merge thin → upsert → `gen_questions_v3`; empty lecture terms no longer Fail Context.", 1000, 40, 560, 180))
     nodes.append(sticky("NOTE — DB/Fin", "## DB / Fin\nUpsert questions by (subtopic_id, ordinal_in_subtopic) WHERE kind='life_mcq'. Job done + lecture `questions_ready`; counters incl. `short_questions` in jobs.payload. empty_konspekt keeps lecture status.", 3100, 40, 480, 160))
 
     n_manual = manual_trigger(0, 300)
@@ -1726,11 +1734,39 @@ def build_psy_05() -> tuple[str, list, dict]:
     n_log_terms = log_usage("DB — Log Usage Terms", 2640, 140)
     n_terms_ready = code(
         "LLM — Terms Ready",
-        "return [{ json: $('LLM — Parse Terms').first().json, pairedItem: 0 }];",
+        sub_code(
+            r"""__SUBTOPIC_LIB__
+const parsed = $('LLM — Parse Terms').item.json;
+const L = $('Load — Lecture').first().json;
+const gate = finalizeTermsExtractGate({
+  parseOk: Boolean(parsed.ok),
+  errorMessage: parsed.error_message || null,
+  subtopics: parsed.subtopics || [],
+  terms: parsed.terms || [],
+  courseTerms: L.course_terms || [],
+  lectureTitle: L.title || '',
+});
+return [{
+  json: {
+    ...parsed,
+    ok: gate.proceed,
+    proceed: gate.proceed,
+    subtopics: gate.subtopics,
+    terms: gate.terms,
+    lecture_terms_empty: gate.lecture_terms_empty,
+    course_fallback: gate.course_fallback,
+    gate_reason: gate.reason,
+  },
+  pairedItem: 0,
+}];""",
+            SUBTOPIC_LIB=subtopic_lib,
+        ),
         2860,
         140,
     )
-    n_terms_ok = iff("LLM — Terms OK", "={{ String($json.ok) }}", "true", 3080, 140, "equals")
+    # proceed is always true after gate (course fallback / synthetic subtopic);
+    # keep IF so hard surprises still have a Fail path without blocking course fallback.
+    n_terms_ok = iff("Run — Terms Proceed", "={{ String($json.proceed) }}", "true", 3080, 140, "equals")
     n_merge_thin = code(
         "LLM — Merge Thin Subtopics",
         sub_code(MERGE_THIN_JS, SUBTOPIC_LIB=subtopic_lib),
@@ -1778,7 +1814,7 @@ def build_psy_05() -> tuple[str, list, dict]:
         220,
     )
     n_should_gen = iff(
-        "LLM — Should Generate",
+        "Run — Should Generate",
         "={{ String($json.skip) }}",
         "false",
         4400,
@@ -1899,19 +1935,19 @@ def build_psy_05() -> tuple[str, list, dict]:
     link(conn, "Shared — DeepSeek Terms", "Fin — Fail Context", 1)
     link(conn, "LLM — Parse Terms", "DB — Log Usage Terms")
     link(conn, "DB — Log Usage Terms", "LLM — Terms Ready")
-    link(conn, "LLM — Terms Ready", "LLM — Terms OK")
-    link(conn, "LLM — Terms OK", "LLM — Merge Thin Subtopics", 0)
-    link(conn, "LLM — Terms OK", "Fin — Fail Context", 1)
+    link(conn, "LLM — Terms Ready", "Run — Terms Proceed")
+    link(conn, "Run — Terms Proceed", "LLM — Merge Thin Subtopics", 0)
+    link(conn, "Run — Terms Proceed", "Fin — Fail Context", 1)
     link(conn, "LLM — Merge Thin Subtopics", "DB — Upsert Terms")
     link(conn, "DB — Upsert Terms", "DB — Upsert Subtopics")
     link(conn, "DB — Upsert Subtopics", "Run — Loop Subtopics")
     link(conn, "Run — Loop Subtopics", "DB — Finish Job", 0)
     link(conn, "Run — Loop Subtopics", "DB — Load Spend", 1)
     link(conn, "DB — Load Spend", "LLM — Build Questions Request")
-    link(conn, "LLM — Build Questions Request", "LLM — Should Generate")
+    link(conn, "LLM — Build Questions Request", "Run — Should Generate")
     # skip=false → generate; skip=true → note no_terms_available, no DeepSeek
-    link(conn, "LLM — Should Generate", "LLM — Budget OK Questions", 0)
-    link(conn, "LLM — Should Generate", "DB — Note No Terms", 1)
+    link(conn, "Run — Should Generate", "LLM — Budget OK Questions", 0)
+    link(conn, "Run — Should Generate", "DB — Note No Terms", 1)
     link(conn, "DB — Note No Terms", "Run — Loop Subtopics")
     link(conn, "LLM — Budget OK Questions", "Shared — DeepSeek Questions", 0)
     link(conn, "LLM — Budget OK Questions", "Fin — Fail Context", 1)
@@ -1934,6 +1970,16 @@ def build_psy_05() -> tuple[str, list, dict]:
 
 # ======================================================================================
 def main() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--only",
+        choices=["psy_05", "all"],
+        default="all",
+        help="Deploy only psy_05 to avoid regenerating psy_03/04 node ids",
+    )
+    args = parser.parse_args()
     results: dict[str, str] = {}
 
     slug5, nodes5, conn5 = build_psy_05()
@@ -1941,12 +1987,15 @@ def main() -> None:
     save_local(slug5, id5, slug5, nodes5, conn5)
     results[slug5] = id5
 
+    if args.only == "psy_05":
+        print(json.dumps(results, ensure_ascii=False, indent=2))
+        return
+
     slug4, nodes4, conn4 = build_psy_04(id5)
     id4 = ensure_workflow(slug4, nodes4, conn4)
     save_local(slug4, id4, slug4, nodes4, conn4)
     results[slug4] = id4
 
-    # psy_03 v2: enqueue konspekt + Fin — Kick psy_04 (rest of psy_03 logic unchanged)
     slug3, nodes3, conn3 = build_psy_03(id4)
     id3 = ensure_workflow(slug3, nodes3, conn3)
     if id3 != PSY_03_ID:

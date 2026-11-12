@@ -149,6 +149,7 @@ function pickTranscriptFragment(
   terms,
   maxChars = DEFAULTS.transcriptMaxChars,
   transcript = '',
+  opts = {},
 ) {
   const segs = transcriptToSegments(chunks, transcript);
   if (!segs.length) {
@@ -162,11 +163,10 @@ function pickTranscriptFragment(
       if (i + 1 < segs.length) hit.add(i + 1);
     }
   });
-  // No lexical hit: still return a positional window from synthetic segments
-  // so the model is not left with an empty transcript when text exists.
+  // No lexical hit: positional window by subtopic index (same idea as konspekt miss).
   let order = Array.from(hit).sort((a, b) => a - b);
   if (!order.length && segs.length) {
-    const mid = Math.min(segs.length - 1, Math.floor(segs.length / 2));
+    const mid = missWindowCenter(segs.length, opts);
     order = [mid];
     if (mid > 0) order.unshift(mid - 1);
     if (mid + 1 < segs.length) order.push(mid + 1);
@@ -303,6 +303,65 @@ function mergeThinSubtopics(subtopics, terms, konspekt, opts = {}) {
 }
 
 /**
+ * After extract_terms: decide whether to enter the subtopic loop.
+ * Empty lecture terms must not fail the lecture when course glossary has definitions
+ * (or when we can still synthesize a single subtopic for no_terms_available).
+ */
+function finalizeTermsExtractGate(input) {
+  const {
+    parseOk,
+    errorMessage = null,
+    subtopics = [],
+    terms = [],
+    courseTerms = [],
+    lectureTitle = '',
+  } = input || {};
+  const courseDefined = termsWithDefinition(courseTerms);
+  const title = String(lectureTitle || '').trim() || 'Лекция';
+  let subs = (subtopics || [])
+    .map((s) => ({ ordinal: Number(s.ordinal), title: String(s.title || '').trim() }))
+    .filter((s) => s.ordinal >= 1 && s.title)
+    .sort((a, b) => a.ordinal - b.ordinal);
+
+  if (!subs.length) {
+    subs = [{ ordinal: 1, title }];
+  }
+
+  // Hard parse failure without any course fallback → still enter loop with synthetic
+  // subtopic so MCQ path can emit no_terms_available (usage 0), not Fail Context.
+  if (parseOk) {
+    return {
+      proceed: true,
+      subtopics: subs,
+      terms: terms || [],
+      reason: null,
+      lecture_terms_empty: !(terms || []).length,
+      course_fallback: false,
+    };
+  }
+
+  if (courseDefined.length) {
+    return {
+      proceed: true,
+      subtopics: subs,
+      terms: terms || [],
+      reason: 'course_terms_fallback',
+      lecture_terms_empty: true,
+      course_fallback: true,
+    };
+  }
+
+  return {
+    proceed: true,
+    subtopics: subs,
+    terms: terms || [],
+    reason: errorMessage || 'no_terms_available',
+    lecture_terms_empty: true,
+    course_fallback: false,
+  };
+}
+
+/**
  * Build questions-request fields (no LLM).
  * skip=true + skip_reason=no_terms_available when no defined terms in subtopic/lecture/course.
  */
@@ -352,6 +411,7 @@ function buildQuestionsRequestParts(input) {
     resolved.terms,
     transcriptMax,
     transcript,
+    { subtopicIndex, subtopicCount },
   );
 
   const termsBlock = resolved.terms.map((t) => '- ' + t.canonical + ': ' + t.definition).join('\n');
@@ -394,5 +454,6 @@ module.exports = {
   termsWithDefinition,
   resolveTermsForSubtopic,
   mergeThinSubtopics,
+  finalizeTermsExtractGate,
   buildQuestionsRequestParts,
 };
