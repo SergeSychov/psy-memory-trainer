@@ -10,7 +10,8 @@
 | [extract_terms.md](extract_terms.md) | v1 без `life_example` (не трогать) |
 | [extract_terms_v2.md](extract_terms_v2.md) | **psy_05** термины + `life_example` |
 | [gen_questions.md](gen_questions.md) | v1 (не трогать) |
-| [gen_questions_v2.md](gen_questions_v2.md) | **psy_05** MCQ; один добор при shortfall, частичный успех |
+| [gen_questions_v2.md](gen_questions_v2.md) | v2 (не трогать) |
+| [gen_questions_v3.md](gen_questions_v3.md) | **psy_05** MCQ; fallback-термины лекции; добор; частичный успех |
 | [explain_miss.md](explain_miss.md) | объяснение при пустом пуле |
 | [consolidate_quiz.md](consolidate_quiz.md) | фаза 2 |
 

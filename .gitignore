@@ -38,3 +38,4 @@ node_modules/
 
 # Local Cursor MCP config
 .cursor/mcp.json
+.cursor/run-n8n-mcp.sh

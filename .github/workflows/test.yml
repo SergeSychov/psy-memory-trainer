@@ -12,7 +12,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: node --test fsrs/fsrs.test.js prompts/prompts.test.js
+      - run: node --test fsrs/fsrs.test.js prompts/prompts.test.js n8n/lib/validate_questions.test.js n8n/lib/subtopic_questions.test.js
 
   whisper:
     runs-on: ubuntu-latest
