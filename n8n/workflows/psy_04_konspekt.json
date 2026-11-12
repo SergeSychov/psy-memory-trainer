@@ -2,7 +2,7 @@
   "name": "psy_04_konspekt",
   "nodes": [
     {
-      "id": "5e884a83-34f6-4aef-bd22-4ea738cf0475",
+      "id": "60685461-7a1e-465b-a949-b1e519ace11f",
       "name": "NOTE — In",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
@@ -18,7 +18,7 @@
       }
     },
     {
-      "id": "5c186608-0377-40cf-a76f-bdc490271535",
+      "id": "9e471a06-b431-48f1-93f6-b5671eeb3459",
       "name": "NOTE — Run",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
@@ -34,7 +34,7 @@
       }
     },
     {
-      "id": "a0dfc812-f8ad-47b5-9dad-8ec0aad60435",
+      "id": "403d5892-9cc8-47b6-810f-e04eea432f49",
       "name": "NOTE — LLM",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
@@ -50,7 +50,7 @@
       }
     },
     {
-      "id": "0b06773d-fa89-46fc-a771-0fb255f930bf",
+      "id": "3c1f2931-a7d5-4b05-8a59-b5adc452832e",
       "name": "NOTE — DB/Fin",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
@@ -66,7 +66,7 @@
       }
     },
     {
-      "id": "2c6c9d4d-8397-4a22-bc1a-24417a8b1b36",
+      "id": "1295225e-6ef3-42ee-a96d-06edf5969ca4",
       "name": "In — Manual",
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
@@ -77,7 +77,7 @@
       "parameters": {}
     },
     {
-      "id": "2e20d68c-7e9d-41a9-9920-555d79625264",
+      "id": "62d409da-737f-4c5d-b7a2-9d2c3ebf41fe",
       "name": "In — Execute",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.1,
@@ -90,7 +90,7 @@
       }
     },
     {
-      "id": "42d91af5-cc62-42c7-be10-2da5bf52937e",
+      "id": "6c1ae7bd-1c2a-4a03-b088-0f435a4039b4",
       "name": "Run — Init Constants",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -103,7 +103,7 @@
       }
     },
     {
-      "id": "4752d4b7-f369-43d8-a728-3e43cc6687ba",
+      "id": "a9697a82-c621-41a4-bdbf-3c3f5e4f3419",
       "name": "Load — Backfill",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -126,7 +126,7 @@
       }
     },
     {
-      "id": "8ada7255-92fe-4437-b5a4-9b0718077a67",
+      "id": "47f6f316-36c1-4751-9102-cc49ed3e1a8c",
       "name": "Run — Create Job",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -149,7 +149,7 @@
       }
     },
     {
-      "id": "8994380f-595d-4aed-9cbe-f8680730b555",
+      "id": "40753259-6c7b-49df-b560-1566068a67e2",
       "name": "Run — Has Job",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
@@ -166,7 +166,7 @@
           },
           "conditions": [
             {
-              "id": "53349aaf-905e-473c-991d-a4c429d8315b",
+              "id": "5b91abbf-7567-4b1d-a18d-6382e1df65ef",
               "leftValue": "={{ $json.id }}",
               "rightValue": "",
               "operator": {
@@ -180,7 +180,7 @@
       }
     },
     {
-      "id": "3bc1a089-0d0c-4fee-b145-d4167cd29140",
+      "id": "9993c4b9-b8ee-43e6-a9f4-90528866ea7a",
       "name": "Load — Lecture",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -203,7 +203,7 @@
       }
     },
     {
-      "id": "de27f83b-dc32-4918-a0a7-ef30e14c57bd",
+      "id": "cef1dc81-4ae5-47d0-8bbc-1a57ab6cc554",
       "name": "Load — Has Transcript",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
@@ -220,7 +220,7 @@
           },
           "conditions": [
             {
-              "id": "6ee6cb52-288f-4ac2-a949-6c4762adf76c",
+              "id": "5b9a4465-bb4b-46d6-8106-e81491d546f8",
               "leftValue": "={{ String($json.transcript || '').trim() }}",
               "rightValue": "",
               "operator": {
@@ -234,7 +234,7 @@
       }
     },
     {
-      "id": "35505236-6397-401a-baae-753ed1f85ebc",
+      "id": "8dc7cfac-ac99-41d5-9c24-309e39a5756d",
       "name": "LLM — Build Prompt",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -247,7 +247,7 @@
       }
     },
     {
-      "id": "94ac12d9-73bc-4548-9049-fdb70f86ad0b",
+      "id": "b7371fa3-5753-47ed-87aa-6a5957fe1612",
       "name": "LLM — Budget Guard",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -260,7 +260,7 @@
       }
     },
     {
-      "id": "ab82536d-0cb0-4bfc-aab8-f1ce5b97d270",
+      "id": "05a9418e-e4a2-4f77-8cf9-f8433573edbb",
       "name": "LLM — Budget OK",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
@@ -277,7 +277,7 @@
           },
           "conditions": [
             {
-              "id": "aaa60b11-771a-4ec9-9c29-02660531ea60",
+              "id": "81605924-4173-409a-b8c2-3c72eb86a71a",
               "leftValue": "={{ String($json.budget_exceeded) }}",
               "rightValue": "false",
               "operator": {
@@ -291,7 +291,7 @@
       }
     },
     {
-      "id": "a5d40507-be1c-462c-bb54-60e7a9fbb946",
+      "id": "960cb365-9efe-4220-b7a8-d845b091c1de",
       "name": "Shared — DeepSeek",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.5,
@@ -321,7 +321,7 @@
       "onError": "continueErrorOutput"
     },
     {
-      "id": "1187a011-2059-4488-a05f-899a75f8b5e1",
+      "id": "df9bc58f-6bb3-4795-9684-29f66430bbee",
       "name": "LLM — Parse Usage",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -334,7 +334,7 @@
       }
     },
     {
-      "id": "61e01f6c-01e4-4c21-8a0b-08d20db955e5",
+      "id": "a44158e3-fd1d-48ba-a750-f39a8c6850a5",
       "name": "DB — Log Usage",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -357,7 +357,7 @@
       }
     },
     {
-      "id": "c0e4ae7d-0448-46fc-b332-61b376d45908",
+      "id": "a31476c3-9ba6-4404-993d-5352e21cf732",
       "name": "LLM — Collect Parts",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -370,7 +370,7 @@
       }
     },
     {
-      "id": "99402703-ec43-40af-8fc0-103391979f5c",
+      "id": "6f303b68-aa92-407c-938e-d7579414b422",
       "name": "LLM — Parts OK",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
@@ -387,7 +387,7 @@
           },
           "conditions": [
             {
-              "id": "b91ca2dd-d3bc-45c9-9196-214dace34641",
+              "id": "598fd250-f4eb-449b-aa93-07db9d236959",
               "leftValue": "={{ String($json.ok) }}",
               "rightValue": "true",
               "operator": {
@@ -401,7 +401,7 @@
       }
     },
     {
-      "id": "37c981ec-e9d1-4721-b7dc-657503357efe",
+      "id": "e63bee7a-796f-4888-a559-4e3bb9b6b723",
       "name": "LLM — Is Single",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
@@ -418,7 +418,7 @@
           },
           "conditions": [
             {
-              "id": "261b7e19-8281-4e85-9f21-90f3cb76c53a",
+              "id": "8324edf2-67a8-4922-a8b9-16c4fb8e4948",
               "leftValue": "={{ $json.mode }}",
               "rightValue": "single",
               "operator": {
@@ -432,7 +432,7 @@
       }
     },
     {
-      "id": "b07c28bf-5224-455a-a454-ac15625d24b2",
+      "id": "959e8b5f-0061-4008-ad92-d8b672f6c777",
       "name": "LLM — Reduce Prep",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -445,7 +445,7 @@
       }
     },
     {
-      "id": "f10b4dbe-4de6-4569-91d9-cca33e7e005a",
+      "id": "72d6c2b8-3527-4484-8dc9-a9a8a3c63994",
       "name": "Shared — DeepSeek Reduce",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.5,
@@ -475,7 +475,7 @@
       "onError": "continueErrorOutput"
     },
     {
-      "id": "cb807d83-cbb1-4f64-90ad-3ad23faa0f7c",
+      "id": "9f95f135-a43a-409d-8815-42d78b59face",
       "name": "LLM — Parse Usage Reduce",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -488,7 +488,7 @@
       }
     },
     {
-      "id": "65af82b6-3606-4af9-bf5f-7629dfeafa40",
+      "id": "3632fcad-1440-4b77-8669-ec0dda8f7dcd",
       "name": "DB — Log Usage Reduce",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -511,7 +511,7 @@
       }
     },
     {
-      "id": "c4052b75-a5cd-4461-9583-1ced824c598f",
+      "id": "5724d199-e6d7-4816-881f-82bdbf109aac",
       "name": "LLM — Finalize Reduce",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -524,7 +524,7 @@
       }
     },
     {
-      "id": "cbd1be45-5eb9-4173-b79a-6867e4f0c4e6",
+      "id": "497d6cdc-1e30-4e54-8284-e8b8677d06ab",
       "name": "LLM — Reduce OK",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
@@ -541,7 +541,7 @@
           },
           "conditions": [
             {
-              "id": "38b18d6b-847b-479b-b95b-097f52a80017",
+              "id": "0b043216-e761-418e-89d5-5cb1bfbf76fa",
               "leftValue": "={{ String($json.ok) }}",
               "rightValue": "true",
               "operator": {
@@ -555,7 +555,7 @@
       }
     },
     {
-      "id": "f40bc665-d5c0-46a3-97b1-1250ac222b7b",
+      "id": "515d3bc5-ca9f-48ed-bf99-2194096ee4bb",
       "name": "DB — Save Konspekt",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -578,7 +578,7 @@
       }
     },
     {
-      "id": "1207e75b-e316-4531-927b-1d6121406800",
+      "id": "03e1a9ba-5d59-4ebb-b96f-dad79780f506",
       "name": "Fin — Kick psy_05",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
@@ -599,7 +599,7 @@
       "onError": "continueRegularOutput"
     },
     {
-      "id": "333dfd3a-2d12-4382-ad18-b8a0ae693332",
+      "id": "00f59e44-7fed-4e0c-9c38-bb19eb90d06b",
       "name": "Fin — Fail Context",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -612,7 +612,7 @@
       }
     },
     {
-      "id": "b793da71-1c8b-4540-b4c1-9b7493e10f60",
+      "id": "126aa0e2-d6cd-4a50-bd04-89efec20c1f8",
       "name": "Fin — Fail Job",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,

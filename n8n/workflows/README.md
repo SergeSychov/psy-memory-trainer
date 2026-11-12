@@ -80,8 +80,9 @@ JSON-экспорт и `.id` файлы. Деплой: `python3 n8n/scripts/pull
 | Триггеры | `In — Manual`, `In — Execute` (passthrough; опц. `max_cost_usd_per_lecture`, `monthly_budget_usd` — только вниз) — **не активировать** |
 | Credentials | `psy Supabase (psy_n8n)`, `DeepSeek account` |
 | Промпты | `extract_terms_v2`, `gen_questions_v3`; валидатор + `subtopic_questions.js` встроены в Code при сборке |
-| Фрагменты | konspekt ≤ ~5.5k (секция ± сосед), transcript ≤ ~7k (хиты ±1); тонкие подтемы сливаются в `LLM — Merge Thin Subtopics` |
-| Без терминов подтемы | MCQ всё равно: fallback `term_canonical` из терминов лекции с definition; один добор; `short_questions` если `< 10` |
+| Фрагменты | konspekt ≤ ~5.5k (секция ± сосед; miss-окно по позиции подтемы), transcript ≤ ~7k (хиты ±1; без chunks — нарезка transcript ~1k) |
+| Термины | цепочка definition: подтема → лекция → курс; если пусто — `skip_reason=no_terms_available`, DeepSeek не вызывается (`DB — Note No Terms`) |
+| Merge thin | только при совпавшей `##` и длине primary < 400; score 0 не сливает |
 | Идемпотентность | job `terms:<lecture_id>`; `subtopics` по `(lecture_id, ordinal)`; `glossary_terms` по `(course_id, canonical)`; `questions` по `(subtopic_id, ordinal_in_subtopic) WHERE kind='life_mcq'` |
 | Читает | `psy.jobs`, `psy.lectures`, `psy.lecture_texts`, `psy.chunks`, `psy.glossary_terms`, `psy.cards` (проверка), `psy.llm_usage` |
 | Пишет | `psy.glossary_terms`, `psy.subtopics`, `psy.questions`, `psy.lectures`, `psy.jobs`, `psy.llm_usage` |

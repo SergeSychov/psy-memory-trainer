@@ -37,7 +37,7 @@ DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
 
 WF_VER = {
     "psy_04": "psy_04_konspekt_v1",
-    "psy_05": "psy_05_terms_questions_v2",
+    "psy_05": "psy_05_terms_questions_v3",
 }
 
 # psy_03 lives in n8n already; id only used as sanity check / fallback when .id is missing.
@@ -962,6 +962,17 @@ LOAD_LECTURE_05 = """SELECT
     SELECT string_agg(g.canonical, ', ' ORDER BY g.canonical)
     FROM psy.glossary_terms g WHERE g.course_id = l.course_id
   ), '') AS glossary,
+  COALESCE((
+    SELECT jsonb_agg(jsonb_build_object(
+      'canonical', g.canonical,
+      'aliases', COALESCE(g.aliases, ARRAY[]::text[]),
+      'definition', g.definition
+    ) ORDER BY g.canonical)
+    FROM psy.glossary_terms g
+    WHERE g.course_id = l.course_id
+      AND g.definition IS NOT NULL
+      AND length(trim(g.definition)) > 0
+  ), '[]'::jsonb) AS course_terms,
   (
     SELECT count(*) FROM psy.cards c
     JOIN psy.questions q ON q.id = c.question_id
@@ -1231,6 +1242,7 @@ const T = $('LLM — Merge Thin Subtopics').item.json;
 const spend = items[0].json;
 const loopSub = $('Run — Loop Subtopics').item.json;
 const runIndex = typeof $runIndex === 'number' ? $runIndex : 0;
+const subList = $('DB — Upsert Subtopics').all().map((i) => i.json);
 const sub = {
   ...loopSub,
   ...spend,
@@ -1245,9 +1257,13 @@ const est = (s) => Math.ceil(String(s || '').length / cpt);
 const parts = buildQuestionsRequestParts({
   subtopic: { ordinal: sub.ordinal, title: sub.title },
   allTerms: T.terms || [],
+  courseTerms: L.course_terms || [],
   konspektMd: L.konspekt_md,
   chunks: L.chunks,
+  transcript: L.transcript || '',
   constants: C,
+  subtopicIndex: Math.max(0, subList.findIndex((s) => Number(s.ordinal) === sub.ordinal)),
+  subtopicCount: Math.max(subList.length, 1),
 });
 
 const base = {
@@ -1262,13 +1278,18 @@ const base = {
   spent_lecture_usd: Number(spend.spent_lecture_usd) || 0,
   term_canonicals: parts.term_canonicals,
   terms_fallback: parts.terms_fallback,
+  terms_source: parts.terms_source,
   existing_stems: [],
   step: 'questions',
   prompt_version: C.prompt_versions.questions,
   loop_run_index: runIndex,
-  skip: false,
-  skip_reason: null,
+  skip: Boolean(parts.skip),
+  skip_reason: parts.skip_reason,
 };
+
+if (parts.skip) {
+  return [{ json: { ...base, budget_exceeded: false }, pairedItem: 0 }];
+}
 
 const user = parts.user_base;
 const P = C.prices_usd_per_1m;
@@ -1285,11 +1306,12 @@ if (base.spent_lecture_usd + projected > lectureCap) {
     + ' (потрачено ' + base.spent_month_usd.toFixed(4) + ')';
 }
 if (reason) {
-  return [{ json: { ...base, budget_exceeded: true, error_message: reason }, pairedItem: 0 }];
+  return [{ json: { ...base, skip: false, budget_exceeded: true, error_message: reason }, pairedItem: 0 }];
 }
 return [{
   json: {
     ...base,
+    skip: false,
     budget_exceeded: false,
     est_input_tokens: inTokens,
     user_base: user,
@@ -1309,6 +1331,20 @@ return [{
   },
   pairedItem: 0,
 }];"""
+
+NOTE_NO_TERMS_SQL = """UPDATE psy.jobs
+SET payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object(
+  'no_terms_subtopics',
+  COALESCE(payload->'no_terms_subtopics', '[]'::jsonb) || jsonb_build_array(
+    jsonb_build_object(
+      'subtopic_ordinal', $1::int,
+      'title', $2::text,
+      'reason', 'no_terms_available'
+    )
+  )
+)
+WHERE id = $3::uuid
+RETURNING id, payload->'no_terms_subtopics' AS no_terms_subtopics"""
 
 MERGE_THIN_JS = r"""__SUBTOPIC_LIB__
 const item = items[0].json;
@@ -1636,7 +1672,7 @@ def build_psy_05() -> tuple[str, list, dict]:
 
     nodes.append(sticky("NOTE — In", "## In\nManual + Execute (passthrough). Lower-only overrides: `max_cost_usd_per_lecture`, `monthly_budget_usd`. Inactive.", -40, 40, 360, 140))
     nodes.append(sticky("NOTE — Run/Load", "## Run / Load\nBackfill `terms` jobs for `konspekt_ready` → claim `terms`. Refuse when cards already exist for the lecture (no LLM).", 380, 40, 460, 140))
-    nodes.append(sticky("NOTE — LLM", "## LLM\n`extract_terms_v2` → merge thin subtopics → upsert → per subtopic `gen_questions_v3` (fragment caps; fallback terms; one top-up; `short_questions`).", 1000, 40, 560, 160))
+    nodes.append(sticky("NOTE — LLM", "## LLM\n`extract_terms_v2` → merge thin (matched ## only) → upsert → per subtopic `gen_questions_v3` (subtopic→lecture→course terms; `no_terms_available` skips DeepSeek).", 1000, 40, 560, 180))
     nodes.append(sticky("NOTE — DB/Fin", "## DB / Fin\nUpsert questions by (subtopic_id, ordinal_in_subtopic) WHERE kind='life_mcq'. Job done + lecture `questions_ready`; counters incl. `short_questions` in jobs.payload. empty_konspekt keeps lecture status.", 3100, 40, 480, 160))
 
     n_manual = manual_trigger(0, 300)
@@ -1741,9 +1777,27 @@ def build_psy_05() -> tuple[str, list, dict]:
         4280,
         220,
     )
-    n_budget_q = iff("LLM — Budget OK Questions", "={{ String($json.budget_exceeded) }}", "false", 4180, 220, "equals")
-    n_has_terms = iff("LLM — Has Terms", "={{ String($json.skip) }}", "false", 4400, 220, "equals")
-    n_http_q = deepseek("Shared — DeepSeek Questions", 4620, 140)
+    n_should_gen = iff(
+        "LLM — Should Generate",
+        "={{ String($json.skip) }}",
+        "false",
+        4400,
+        220,
+        "equals",
+    )
+    n_note_no_terms = pg(
+        "DB — Note No Terms",
+        NOTE_NO_TERMS_SQL,
+        4400,
+        400,
+        """={{ [
+  Number($json.ordinal),
+  $json.title,
+  $json.job_id
+] }}""",
+    )
+    n_budget_q = iff("LLM — Budget OK Questions", "={{ String($json.budget_exceeded) }}", "false", 4620, 140, "equals")
+    n_http_q = deepseek("Shared — DeepSeek Questions", 4840, 140)
     n_parse_q = code(
         "LLM — Parse Questions",
         sub_code(
@@ -1811,9 +1865,9 @@ def build_psy_05() -> tuple[str, list, dict]:
 ] }}""",
     )
     n_finish["executeOnce"] = True
-    # Shift question-loop chain further right for the merge node.
+    # Shift LLM chain further right after Should Generate / Note No Terms.
     for n in (
-        n_budget_q, n_has_terms, n_http_q, n_parse_q,
+        n_budget_q, n_http_q, n_parse_q,
         n_log_q, n_decide, n_needs_retry, n_http_retry, n_parse_retry, n_log_retry, n_merge, n_up_q,
     ):
         n["position"][0] += 440
@@ -1822,9 +1876,9 @@ def build_psy_05() -> tuple[str, list, dict]:
     nodes.extend([
         n_manual, n_exec, n_init, n_backfill, n_claim, n_has, n_lecture, n_no_cards, n_has_konspekt,
         n_build_terms, n_budget_terms, n_http_terms, n_parse_terms, n_log_terms, n_terms_ready, n_terms_ok,
-        n_merge_thin, n_up_terms, n_up_subs, n_loop, n_spend, n_build_q, n_budget_q, n_has_terms, n_http_q,
-        n_parse_q, n_log_q, n_decide, n_needs_retry, n_http_retry, n_parse_retry, n_log_retry, n_merge,
-        n_up_q, n_finish, n_fail_ctx, n_fail,
+        n_merge_thin, n_up_terms, n_up_subs, n_loop, n_spend, n_build_q, n_should_gen, n_note_no_terms,
+        n_budget_q, n_http_q, n_parse_q, n_log_q, n_decide, n_needs_retry, n_http_retry, n_parse_retry,
+        n_log_retry, n_merge, n_up_q, n_finish, n_fail_ctx, n_fail,
     ])
 
     link(conn, "In — Manual", "Run — Init Constants")
@@ -1854,11 +1908,13 @@ def build_psy_05() -> tuple[str, list, dict]:
     link(conn, "Run — Loop Subtopics", "DB — Finish Job", 0)
     link(conn, "Run — Loop Subtopics", "DB — Load Spend", 1)
     link(conn, "DB — Load Spend", "LLM — Build Questions Request")
-    link(conn, "LLM — Build Questions Request", "LLM — Budget OK Questions")
-    link(conn, "LLM — Budget OK Questions", "LLM — Has Terms", 0)
+    link(conn, "LLM — Build Questions Request", "LLM — Should Generate")
+    # skip=false → generate; skip=true → note no_terms_available, no DeepSeek
+    link(conn, "LLM — Should Generate", "LLM — Budget OK Questions", 0)
+    link(conn, "LLM — Should Generate", "DB — Note No Terms", 1)
+    link(conn, "DB — Note No Terms", "Run — Loop Subtopics")
+    link(conn, "LLM — Budget OK Questions", "Shared — DeepSeek Questions", 0)
     link(conn, "LLM — Budget OK Questions", "Fin — Fail Context", 1)
-    link(conn, "LLM — Has Terms", "Shared — DeepSeek Questions", 0)
-    link(conn, "LLM — Has Terms", "Run — Loop Subtopics", 1)
     link(conn, "Shared — DeepSeek Questions", "LLM — Parse Questions", 0)
     link(conn, "Shared — DeepSeek Questions", "Fin — Fail Context", 1)
     link(conn, "LLM — Parse Questions", "DB — Log Usage Questions")
