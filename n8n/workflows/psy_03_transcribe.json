@@ -2,7 +2,7 @@
   "name": "psy_03_transcribe",
   "nodes": [
     {
-      "id": "ca3d4b78-2562-4aed-9ca8-4da62de4d1af",
+      "id": "1bae4351-9ff8-4ca3-8d9c-56a64f241e22",
       "name": "NOTE — ASR",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
@@ -18,7 +18,7 @@
       }
     },
     {
-      "id": "f17a1a88-767c-4713-b02e-df0a14f1e919",
+      "id": "ac8375b4-8c18-4e88-a4ad-c57f77e3e5a0",
       "name": "NOTE — DB",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
@@ -27,14 +27,14 @@
         40
       ],
       "parameters": {
-        "content": "## DB\nIdempotent lecture_texts + chunks upsert. Keep opus.",
-        "width": 320,
+        "content": "## DB\nIdempotent lecture_texts + chunks upsert. Keep opus.\nv2: enqueue `konspekt:<lecture_id>` + kick psy_04 (wait=false).",
+        "width": 360,
         "height": 140,
         "color": 5
       }
     },
     {
-      "id": "20781b2b-6f70-439d-b7bc-6051c541d68b",
+      "id": "26749cd3-bc6f-433f-9643-afbe2bc2b7da",
       "name": "In — Manual",
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
@@ -45,7 +45,7 @@
       "parameters": {}
     },
     {
-      "id": "b49b4dbc-05fb-4136-a7b5-6abaa0c8f5cf",
+      "id": "d5d21f94-c9ac-4059-940e-4854e98b4b6c",
       "name": "In — Execute",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1,
@@ -56,7 +56,7 @@
       "parameters": {}
     },
     {
-      "id": "c79469ca-bb11-404a-b42f-67ebfd20f002",
+      "id": "4bb3028f-84f8-4962-b251-1e608b5276b8",
       "name": "Run — Init Constants",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -65,11 +65,11 @@
         360
       ],
       "parameters": {
-        "jsCode": "return items.map((item, index) => {\n  const constants = {\n    workflow_version: 'psy_03_transcribe_v1',\n    whisper_base: 'http://psy-whisper:8080',\n    language: 'ru',\n  };\n  return { json: { ...item.json, constants }, pairedItem: index };\n});"
+        "jsCode": "return items.map((item, index) => {\n  const constants = {\n    workflow_version: 'psy_03_transcribe_v2',\n    whisper_base: 'http://psy-whisper:8080',\n    language: 'ru',\n  };\n  return { json: { ...item.json, constants }, pairedItem: index };\n});"
       }
     },
     {
-      "id": "ab85270b-bfd4-4fcc-8d19-a695a5b5d0d3",
+      "id": "c3d3396e-67f3-4ff3-8cf8-f7d5ec877b32",
       "name": "Run — Create Job",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -92,7 +92,7 @@
       }
     },
     {
-      "id": "f87f7a3d-4c83-40f2-9c95-5a0ef2b56ff3",
+      "id": "1d0dd835-0aae-42cf-b2cf-08e1973fa92e",
       "name": "Run — Has Job",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
@@ -109,7 +109,7 @@
           },
           "conditions": [
             {
-              "id": "88fa2562-aad9-4337-a4ad-4e72afb0337e",
+              "id": "823d2ac9-9431-4572-941c-953ffbdfd61d",
               "leftValue": "={{ $json.id }}",
               "rightValue": "",
               "operator": {
@@ -123,7 +123,7 @@
       }
     },
     {
-      "id": "2e1fc1a6-2f8e-4e46-93cd-0b6ede4b83e1",
+      "id": "b973fa33-250f-4bab-a83f-5e0fa1241b89",
       "name": "Load — Glossary",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -146,7 +146,7 @@
       }
     },
     {
-      "id": "8cdb5f4c-4c0a-4a04-b5b2-89a3db800490",
+      "id": "c73f0d32-6f50-4565-9e4a-9da329a4808c",
       "name": "ASR — Prep Request",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -159,7 +159,7 @@
       }
     },
     {
-      "id": "baff1fce-0950-4f51-839d-ee5a5a519efb",
+      "id": "e1d8d507-6430-419b-94ea-b0826071b4c0",
       "name": "ASR — Transcribe",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.5,
@@ -189,7 +189,7 @@
       "onError": "continueErrorOutput"
     },
     {
-      "id": "2e9ebd0a-1923-4d94-b0df-0276daba8a73",
+      "id": "0b718992-2d11-44d0-b44f-b8cbac3fd81d",
       "name": "DB — Save Transcript",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -199,9 +199,9 @@
       ],
       "parameters": {
         "operation": "executeQuery",
-        "query": "WITH params AS (\n  SELECT\n    $1::uuid AS lecture_id,\n    $2::uuid AS job_id,\n    $3::text AS transcript,\n    $4::text AS whisper_model,\n    $5::int AS duration_sec,\n    $6::jsonb AS segments\n), upsert_text AS (\n  INSERT INTO psy.lecture_texts (lecture_id, transcript, whisper_model)\n  SELECT lecture_id, transcript, whisper_model FROM params\n  ON CONFLICT (lecture_id) DO UPDATE\n    SET transcript = EXCLUDED.transcript,\n        whisper_model = EXCLUDED.whisper_model\n  RETURNING lecture_id\n), upsert_chunks AS (\n  INSERT INTO psy.chunks (lecture_id, ordinal, start_ms, end_ms, text)\n  SELECT p.lecture_id, s.ordinal, s.start_ms, s.end_ms, s.text\n  FROM params p\n  CROSS JOIN LATERAL jsonb_to_recordset(p.segments) AS s(\n    ordinal int, start_ms int, end_ms int, text text\n  )\n  ON CONFLICT (lecture_id, ordinal) DO UPDATE\n    SET start_ms = EXCLUDED.start_ms,\n        end_ms = EXCLUDED.end_ms,\n        text = EXCLUDED.text\n  RETURNING ordinal\n), max_ord AS (\n  SELECT COALESCE(MAX(ordinal), 0) AS m FROM upsert_chunks\n), del AS (\n  DELETE FROM psy.chunks c\n  USING params p, max_ord m\n  WHERE c.lecture_id = p.lecture_id AND c.ordinal > m.m\n  RETURNING c.ordinal\n), lec AS (\n  UPDATE psy.lectures l\n  SET status = 'transcribed',\n      duration_sec = COALESCE((SELECT duration_sec FROM params), l.duration_sec),\n      error = NULL\n  FROM params p\n  WHERE l.id = p.lecture_id\n  RETURNING l.id\n), done_job AS (\n  UPDATE psy.jobs\n  SET status = 'done', finished_at = now(), error = NULL\n  WHERE id = (SELECT job_id FROM params)\n  RETURNING id\n)\nSELECT\n  (SELECT id FROM lec) AS lecture_id,\n  (SELECT id FROM done_job) AS job_id,\n  (SELECT count(*) FROM upsert_chunks) AS chunk_count",
+        "query": "WITH params AS (\n  SELECT\n    $1::uuid AS lecture_id,\n    $2::uuid AS job_id,\n    $3::text AS transcript,\n    $4::text AS whisper_model,\n    $5::int AS duration_sec,\n    $6::jsonb AS segments,\n    $7::text AS workflow_version\n), upsert_text AS (\n  INSERT INTO psy.lecture_texts (lecture_id, transcript, whisper_model)\n  SELECT lecture_id, transcript, whisper_model FROM params\n  ON CONFLICT (lecture_id) DO UPDATE\n    SET transcript = EXCLUDED.transcript,\n        whisper_model = EXCLUDED.whisper_model\n  RETURNING lecture_id\n), upsert_chunks AS (\n  INSERT INTO psy.chunks (lecture_id, ordinal, start_ms, end_ms, text)\n  SELECT p.lecture_id, s.ordinal, s.start_ms, s.end_ms, s.text\n  FROM params p\n  CROSS JOIN LATERAL jsonb_to_recordset(p.segments) AS s(\n    ordinal int, start_ms int, end_ms int, text text\n  )\n  ON CONFLICT (lecture_id, ordinal) DO UPDATE\n    SET start_ms = EXCLUDED.start_ms,\n        end_ms = EXCLUDED.end_ms,\n        text = EXCLUDED.text\n  RETURNING ordinal\n), max_ord AS (\n  SELECT COALESCE(MAX(ordinal), 0) AS m FROM upsert_chunks\n), del AS (\n  DELETE FROM psy.chunks c\n  USING params p, max_ord m\n  WHERE c.lecture_id = p.lecture_id AND c.ordinal > m.m\n  RETURNING c.ordinal\n), lec AS (\n  UPDATE psy.lectures l\n  SET status = 'transcribed',\n      duration_sec = COALESCE((SELECT duration_sec FROM params), l.duration_sec),\n      error = NULL\n  FROM params p\n  WHERE l.id = p.lecture_id\n  RETURNING l.id\n), done_job AS (\n  UPDATE psy.jobs\n  SET status = 'done', finished_at = now(), error = NULL\n  WHERE id = (SELECT job_id FROM params)\n  RETURNING id\n), enq_konspekt AS (\n  INSERT INTO psy.jobs (lecture_id, step, status, idempotency_key, payload)\n  SELECT p.lecture_id, 'konspekt', 'queued', 'konspekt:' || p.lecture_id::text,\n         jsonb_build_object('workflow_version', p.workflow_version, 'source', 'psy_03')\n  FROM params p\n  WHERE EXISTS (SELECT 1 FROM done_job)\n  ON CONFLICT (idempotency_key) DO NOTHING\n  RETURNING id\n)\nSELECT\n  (SELECT id FROM lec) AS lecture_id,\n  (SELECT id FROM done_job) AS job_id,\n  (SELECT count(*) FROM upsert_chunks) AS chunk_count,\n  (SELECT id FROM enq_konspekt) AS konspekt_job_id",
         "options": {
-          "queryReplacement": "={{ [\n  $('ASR — Prep Request').item.json.lecture_id,\n  $('ASR — Prep Request').item.json.job_id,\n  $json.text,\n  $json.model,\n  Math.round(Number($json.duration_sec || 0)),\n  JSON.stringify($json.segments || [])\n] }}"
+          "queryReplacement": "={{ [\n  $('ASR — Prep Request').item.json.lecture_id,\n  $('ASR — Prep Request').item.json.job_id,\n  $json.text,\n  $json.model,\n  Math.round(Number($json.duration_sec || 0)),\n  JSON.stringify($json.segments || []),\n  $('Run — Init Constants').first().json.constants.workflow_version\n] }}"
         }
       },
       "credentials": {
@@ -212,7 +212,7 @@
       }
     },
     {
-      "id": "edfd76de-5a42-49ff-8e86-749b4a3032bc",
+      "id": "d4d2c224-b5e8-4b28-ae61-32ced5b731a5",
       "name": "Fin — Fail Context",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -225,7 +225,7 @@
       }
     },
     {
-      "id": "a9cb2b4a-2740-4da6-825d-b836a4c64a0c",
+      "id": "e8c700c1-7417-4ffc-9985-89c8725577d0",
       "name": "Fin — Fail Job",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -246,6 +246,27 @@
           "name": "psy Supabase (psy_n8n)"
         }
       }
+    },
+    {
+      "id": "fd002d6b-b7e7-46f1-a24d-b82de2b3456a",
+      "name": "Fin — Kick psy_04",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1760,
+        220
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "bDdmCwefCNaPaY9F"
+        },
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      },
+      "onError": "continueRegularOutput"
     }
   ],
   "connections": {
@@ -338,6 +359,17 @@
         [
           {
             "node": "Fin — Fail Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB — Save Transcript": {
+      "main": [
+        [
+          {
+            "node": "Fin — Kick psy_04",
             "type": "main",
             "index": 0
           }
