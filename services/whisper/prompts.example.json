@@ -1,0 +1,8 @@
+{
+  "courses": {
+    "PASTE_COURSE_UUID": {
+      "initial_prompt": "",
+      "hotwords": ""
+    }
+  }
+}

@@ -11,8 +11,8 @@
         40
       ],
       "parameters": {
-        "content": "## ASR\nClaim transcribe job, glossary → initial_prompt, whisper.",
-        "width": 360,
+        "content": "## ASR\nClaim transcribe job. Glossary canonical → initial_prompt.\ncourse_id → prompt_key. Список курса лежит на хосте whisper, не в git.",
+        "width": 420,
         "height": 140,
         "color": 5
       }
@@ -65,7 +65,7 @@
         360
       ],
       "parameters": {
-        "jsCode": "return items.map((item, index) => {\n  const constants = {\n    workflow_version: 'psy_03_transcribe_v2',\n    whisper_base: 'http://psy-whisper:8080',\n    language: 'ru',\n  };\n  return { json: { ...item.json, constants }, pairedItem: index };\n});"
+        "jsCode": "return items.map((item, index) => {\n  const constants = {\n    workflow_version: 'psy_03_transcribe_v3',\n    whisper_base: 'http://psy-whisper:8080',\n    language: 'ru',\n  };\n  return { json: { ...item.json, constants }, pairedItem: index };\n});"
       }
     },
     {
@@ -155,7 +155,7 @@
         300
       ],
       "parameters": {
-        "jsCode": "const row = items[0].json;\nconst constants = $('Run — Init Constants').first().json.constants;\nconst prompt = row.initial_prompt;\nconst body = {\n  audio_path: row.audio_path,\n  language: constants.language || 'ru',\n};\nif (prompt) body.initial_prompt = prompt;\nreturn [{\n  json: {\n    ...row,\n    constants,\n    request_body: body,\n    has_initial_prompt: Boolean(prompt),\n  },\n  pairedItem: 0,\n}];"
+        "jsCode": "const row = items[0].json;\nconst constants = $('Run — Init Constants').first().json.constants;\nconst prompt = row.initial_prompt;\nconst body = {\n  audio_path: row.audio_path,\n  language: constants.language || 'ru',\n};\n// prompt_key выбирает список курса на хосте whisper. Сам список в workflow не класть.\nif (row.course_id) body.prompt_key = String(row.course_id);\nif (prompt) body.initial_prompt = prompt;\nreturn [{\n  json: {\n    ...row,\n    constants,\n    request_body: body,\n    has_initial_prompt: Boolean(prompt || row.course_id),\n  },\n  pairedItem: 0,\n}];"
       }
     },
     {

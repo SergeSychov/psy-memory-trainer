@@ -3,6 +3,9 @@
 #   /opt/psy-whisper/src/                <- Dockerfile, app.py, requirements.txt
 #   /opt/psy-whisper/data/               <- общий каталог медиа (inbox/, audio/)
 #   /opt/psy-whisper/.env                <- WHISPER_TOKEN=... (chmod 600, в git не класть)
+#   /opt/psy-whisper/prompts/courses.json <- списки курсов (chmod 600, в git не класть)
+#     пустой шаблон: services/whisper/prompts.example.json
+#     каталог создать ДО первого up, иначе Docker создаст его сам от root
 #
 # Контейнер живёт постоянно: после WHISPER_IDLE_UNLOAD_SEC простоя модель
 # выгружается из RAM, процесс остаётся. У n8n нет docker.sock и SSH к хосту,
@@ -30,9 +33,15 @@ services:
       WHISPER_CACHE_DIR: /models
       HF_HUB_CACHE: /models
       HF_HUB_DISABLE_TELEMETRY: "1"
+      MKL_ENABLE_INSTRUCTIONS: AVX512
+      WHISPER_CHUNK_SEC: "600"
+      WHISPER_CHUNK_OVERLAP_SEC: "20"
+      WHISPER_CONDITION_ON_PREVIOUS_TEXT: "0"
+      WHISPER_PROMPTS_FILE: /prompts/courses.json
     volumes:
       - whisper-models:/models
       - /opt/psy-whisper/data:/data
+      - /opt/psy-whisper/prompts:/prompts:ro
     networks:
       n8n:
         aliases: [psy-whisper]
