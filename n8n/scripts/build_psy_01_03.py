@@ -17,7 +17,7 @@ WHISPER_BASE = "http://psy-whisper:8080"
 WF_VER = {
     "psy_01": "psy_01_ingest_cloud_folder_v1",
     "psy_02": "psy_02_extract_audio_v1",
-    "psy_03": "psy_03_transcribe_v2",
+    "psy_03": "psy_03_transcribe_v3",
 }
 
 
@@ -707,10 +707,19 @@ RETURNING j.*"""
 
 
 def build_psy_03(psy_04_id: str | None = None) -> tuple[str, list, dict]:
-    """psy_03_transcribe v2: + enqueue konspekt job and (when psy_04_id is known) Fin — Kick psy_04."""
+    """psy_03_transcribe v3: prompt_key = course_id. Список курса на хосте whisper, не в JSON."""
     nodes = []
     conn: dict = {}
-    nodes.append(sticky("NOTE — ASR", "## ASR\nClaim transcribe job, glossary → initial_prompt, whisper.", -40, 40, 360))
+    nodes.append(
+        sticky(
+            "NOTE — ASR",
+            "## ASR\nClaim transcribe job. Glossary canonical → initial_prompt.\n"
+            "course_id → prompt_key. Список курса лежит на хосте whisper, не в git.",
+            -40,
+            40,
+            420,
+        )
+    )
     nodes.append(
         sticky(
             "NOTE — DB",
@@ -762,13 +771,15 @@ const body = {
   audio_path: row.audio_path,
   language: constants.language || 'ru',
 };
+// prompt_key выбирает список курса на хосте whisper. Сам список в workflow не класть.
+if (row.course_id) body.prompt_key = String(row.course_id);
 if (prompt) body.initial_prompt = prompt;
 return [{
   json: {
     ...row,
     constants,
     request_body: body,
-    has_initial_prompt: Boolean(prompt),
+    has_initial_prompt: Boolean(prompt || row.course_id),
   },
   pairedItem: 0,
 }];""",

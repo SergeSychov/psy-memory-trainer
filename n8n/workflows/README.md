@@ -39,12 +39,12 @@ JSON-экспорт и `.id` файлы. Деплой: `python3 n8n/scripts/pull
 | Триггеры | `In — Manual`, `In — Execute` |
 | Credentials | `psy Supabase (psy_n8n)`, `psy Whisper token` |
 | Идемпотентность | claim; upsert `lecture_texts` / `chunks` по ключам; enqueue `konspekt:<lecture_id>` `ON CONFLICT DO NOTHING` |
-| Читает | `psy.jobs`, `psy.lectures`, `psy.glossary_terms` |
+| Читает | `psy.jobs`, `psy.lectures`, `psy.glossary_terms`. Список курса с диска whisper — по `prompt_key` = `course_id`, в JSON workflow его нет |
 | Пишет | `psy.lecture_texts`, `psy.chunks`, `psy.lectures`, `psy.jobs` (в т.ч. job `konspekt`) |
 | Успех | `transcribed`, chunks ordinal с 1; opus не удалять; job `konspekt` queued; `Fin — Kick psy_04` (wait=false, `onError: continueRegularOutput`) |
 | Ошибка | как в psy_02 (без delete opus) |
 
-`workflow_version` (`psy_03_transcribe_v2`) пишется в `psy.jobs.payload`. Таймаут transcribe: 180 мин.
+`workflow_version` (`psy_03_transcribe_v3`) пишется в `psy.jobs.payload`. v3 добавляет в тело `/transcribe` поле `prompt_key` из `course_id`. Текст списка по-прежнему не в workflow: его читает сервис из файла на хосте. Таймаут transcribe: 180 мин. JSON в git остаётся `active: false`. На инстанс его кладёт только `python3 n8n/scripts/push_workflow.py psy_03_transcribe` после подтверждения владельца. До этого живой n8n шлёт прежний запрос, сервис его принимает.
 
 ## Общие правила psy_04 / psy_05
 

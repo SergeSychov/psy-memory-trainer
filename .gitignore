@@ -28,6 +28,9 @@ fixtures/lecture39/
 !prompts/konspekt_v2.md
 **/transcribe_meta.json
 
+# Per-course Whisper prompts. The filled file stays on the server.
+services/whisper/prompts.local.json
+
 # Local tooling
 .DS_Store
 .venv/

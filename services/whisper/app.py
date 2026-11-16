@@ -5,16 +5,23 @@ n8n ffmpeg не содержит, поэтому и нарезка, и расп�
 Большие лекции сервис качает из Google Drive сам (/drive/fetch), n8n видео в память не берёт.
 Модель в память попадает на первом /transcribe и выгружается после простоя
 (WHISPER_IDLE_UNLOAD_SEC). Процесс при этом живёт дальше.
+Длинный файл в модель целиком не отдаётся: распознавание идёт окнами
+WHISPER_CHUNK_SEC, в RAM один кусок float32.
 """
 
 from __future__ import annotations
+
+import os
+
+# До загрузки CTranslate2. На Intel с AMX int8 через MKL даёт мусорные токены;
+# AVX512 этот путь отключает. На AMD (прод, EPYC Rome) флаг не меняет рабочий ISA.
+os.environ.setdefault("MKL_ENABLE_INSTRUCTIONS", "AVX512")
 
 import ctypes
 import gc
 import hashlib
 import json
 import logging
-import os
 import shutil
 import signal
 import subprocess
@@ -26,6 +33,18 @@ import urllib.request
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from chunking import (
+    DEFAULT_HALLUCINATION_PHRASES,
+    AudioPiece,
+    assemble_segments,
+    filter_hallucinations,
+    merge_terms,
+    normalize_text,
+    number_segments,
+    parse_silencedetect,
+    plan_pieces,
+    window_ffmpeg_args,
+)
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -80,6 +99,15 @@ class Settings(BaseModel):
     min_free_mb: int
     drive_api_base: str
     drive_timeout_sec: int
+    chunk_sec: float
+    chunk_overlap_sec: float
+    silence_noise_db: float
+    silence_min_sec: float
+    silence_search_sec: float
+    condition_on_previous_text: bool
+    hallucination_silence_sec: float | None
+    hallucination_phrases: tuple[str, ...]
+    prompts_file: Path | None
 
 
 class ExtractRequest(BaseModel):
@@ -105,6 +133,9 @@ class DriveFetchRequest(BaseModel):
 class TranscribeRequest(BaseModel):
     audio_path: str = Field(min_length=1, max_length=4096)
     initial_prompt: str | None = Field(default=None, max_length=20000)
+    hotwords: str | None = Field(default=None, max_length=20000)
+    # Ключ курса (uuid). Текст промпта по нему читается с диска, в запрос его не кладут.
+    prompt_key: str | None = Field(default=None, max_length=200)
     language: str = "ru"
     model: str | None = None
     vad_filter: bool | None = None
@@ -127,6 +158,19 @@ def _env_int(name: str, default: int, env: dict[str, str] | None = None) -> int:
         raise HTTPException(400, name + " must be an integer") from exc
 
 
+def _env_float(name: str, default: float, env: dict[str, str] | None = None) -> float:
+    raw = _env(name, str(default), env)
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise HTTPException(400, name + " must be a number") from exc
+
+
+def _env_bool(name: str, default: bool, env: dict[str, str] | None = None) -> bool:
+    raw = _env(name, "1" if default else "0", env).lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def load_settings(env: dict[str, str] | None = None) -> Settings:
     model = _env("WHISPER_MODEL", DEFAULT_MODEL, env)
     compute = _env("WHISPER_COMPUTE_TYPE", "int8", env)
@@ -146,6 +190,11 @@ def load_settings(env: dict[str, str] | None = None) -> Settings:
     drive_timeout = _env_int("DRIVE_TIMEOUT_SEC", 120, env)
     max_audio = _env_int("WHISPER_MAX_AUDIO_SEC", 4 * 60 * 60, env)
     vad = _env("WHISPER_VAD_FILTER", "1", env) not in {"0", "false", "False"}
+    chunk = _env_float("WHISPER_CHUNK_SEC", 600, env)
+    overlap = _env_float("WHISPER_CHUNK_OVERLAP_SEC", 20, env)
+    noise_db = _env_float("WHISPER_SILENCE_NOISE_DB", -35, env)
+    silence_min = _env_float("WHISPER_SILENCE_MIN_SEC", 0.5, env)
+    silence_search = _env_float("WHISPER_SILENCE_SEARCH_SEC", 90, env)
     return Settings(
         data_dir=Path(_env("DATA_DIR", "/data", env)),
         model=model,
@@ -163,7 +212,53 @@ def load_settings(env: dict[str, str] | None = None) -> Settings:
             "DRIVE_API_BASE", "https://www.googleapis.com/drive/v3", env
         ).rstrip("/"),
         drive_timeout_sec=max(5, drive_timeout),
+        chunk_sec=max(1.0, min(900.0, chunk)),
+        chunk_overlap_sec=max(0.0, min(120.0, overlap)),
+        silence_noise_db=max(-90.0, min(-10.0, noise_db)),
+        silence_min_sec=max(0.1, min(5.0, silence_min)),
+        silence_search_sec=max(0.0, min(300.0, silence_search)),
+        condition_on_previous_text=_env_bool("WHISPER_CONDITION_ON_PREVIOUS_TEXT", False, env),
+        hallucination_silence_sec=_silence_threshold(env),
+        hallucination_phrases=_hallucination_phrases(env),
+        prompts_file=_prompts_path(env),
     )
+
+
+def _silence_threshold(env: dict[str, str] | None) -> float | None:
+    raw = _env("WHISPER_HALLUCINATION_SILENCE_THRESHOLD", "0", env).lower()
+    if raw in {"", "0", "off", "none", "false"}:
+        return None
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise HTTPException(
+            400, "WHISPER_HALLUCINATION_SILENCE_THRESHOLD must be a number"
+        ) from exc
+    if value <= 0:
+        return None
+    return min(value, 30.0)
+
+
+def _hallucination_phrases(env: dict[str, str] | None) -> tuple[str, ...]:
+    phrases: list[str] = []
+    if _env_bool("WHISPER_HALLUCINATION_USE_DEFAULTS", True, env):
+        phrases.extend(DEFAULT_HALLUCINATION_PHRASES)
+    extra = _env("WHISPER_HALLUCINATION_PHRASES", "", env)
+    for part in extra.split("|"):
+        text = normalize_text(part)
+        if text and text not in phrases:
+            phrases.append(text)
+    return tuple(normalize_text(item) for item in phrases)
+
+
+def _prompts_path(env: dict[str, str] | None) -> Path | None:
+    raw = _env("WHISPER_PROMPTS_FILE", "", env)
+    if not raw:
+        return None
+    path = Path(raw)
+    if not path.is_absolute():
+        path = Path(_env("DATA_DIR", "/data", env)) / path
+    return path
 
 
 def idle_exit_seconds(env: dict[str, str] | None = None) -> int:
@@ -187,6 +282,81 @@ def truncate_prompt(prompt: str | None) -> tuple[str | None, bool]:
     if comma >= 200:
         cut = cut[:comma]
     return cut.strip(), True
+
+
+def _prompt_fields(value: object) -> tuple[str, str]:
+    if isinstance(value, str):
+        return value.strip()[:20000], ""
+    if isinstance(value, dict):
+        prompt = value.get("initial_prompt") or ""
+        hotwords = value.get("hotwords") or ""
+        if not isinstance(prompt, str):
+            prompt = ""
+        if not isinstance(hotwords, str):
+            hotwords = ""
+        return prompt.strip()[:20000], hotwords.strip()[:20000]
+    return "", ""
+
+
+def load_prompt_table(path: Path | None) -> dict[str, tuple[str, str]]:
+    """course id → (initial_prompt, hotwords). Пустого файла и пустых строк нет в таблице."""
+    if path is None or not path.is_file():
+        return {}
+    try:
+        if path.stat().st_size > 256 * 1024:
+            log.warning("whisper prompts file is too large")
+            return {}
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        log.warning("whisper prompts file is unreadable")
+        return {}
+    courses = payload.get("courses") if isinstance(payload, dict) else None
+    if not isinstance(courses, dict):
+        log.warning("whisper prompts file has no courses object")
+        return {}
+    table: dict[str, tuple[str, str]] = {}
+    for key, value in courses.items():
+        if not isinstance(key, str) or not key.strip():
+            continue
+        prompt, hotwords = _prompt_fields(value)
+        if not prompt and not hotwords:
+            continue
+        table[key.strip()] = (prompt, hotwords)
+    return table
+
+
+def lookup_course_prompt(table: dict[str, tuple[str, str]], key: str | None) -> tuple[str, str]:
+    if not key:
+        return "", ""
+    found = table.get(key.strip())
+    if found is not None:
+        return found
+    folded = key.strip().casefold()
+    for name, value in table.items():
+        if name.casefold() == folded:
+            return value
+    return "", ""
+
+
+def resolve_request_prompts(
+    body: TranscribeRequest,
+    settings: Settings,
+) -> tuple[str | None, str | None, bool]:
+    """Файл курса идёт первым: при обрезке до 800 символов фамилии не отваливаются хвостом."""
+    table = load_prompt_table(settings.prompts_file)
+    file_prompt, file_hotwords = lookup_course_prompt(table, body.prompt_key)
+    # Без файла курса строка запроса режется как раньше, включая повторы.
+    # Со списком курса повторы выкидываются, и написания из файла остаются в начале.
+    if file_prompt and body.initial_prompt:
+        merged = merge_terms(file_prompt, body.initial_prompt)
+    elif file_prompt:
+        merged = merge_terms(file_prompt)
+    else:
+        merged = body.initial_prompt
+    prompt, truncated = truncate_prompt(merged)
+    hot_source = body.hotwords.strip() if body.hotwords and body.hotwords.strip() else file_hotwords
+    hotwords, hot_truncated = truncate_prompt(hot_source)
+    return prompt, hotwords, truncated or hot_truncated
 
 
 def resolve_data_path(raw: str, data_dir: Path, *, must_exist: bool) -> Path:
@@ -489,6 +659,14 @@ def touch_activity() -> None:
     _last_activity = time.monotonic()
 
 
+def release_heap() -> None:
+    gc.collect()
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except (OSError, AttributeError):
+        pass
+
+
 def unload_model() -> bool:
     """Освобождает веса модели. Вызывать под job-lock."""
     global _model, _model_key
@@ -496,11 +674,7 @@ def unload_model() -> bool:
         return False
     _model = None
     _model_key = None
-    gc.collect()
-    try:
-        ctypes.CDLL("libc.so.6").malloc_trim(0)
-    except (OSError, AttributeError):
-        pass
+    release_heap()
     return True
 
 
@@ -545,7 +719,10 @@ def check_model_name(name: str) -> str:
 
 
 def decode_for_model(path: Path, max_seconds: int) -> tuple[object, float]:
-    """ffmpeg -> float32 mono 16 kHz. Так мы не зависим от PyAV и сами задаём частоту."""
+    """Полный файл в float32. /transcribe так больше не делает: длинная лекция не влезает в 4 ГБ.
+
+    Оставлено для коротких проверок. Распознавание идёт через decode_window.
+    """
     import numpy as np
 
     proc = subprocess.run(
@@ -581,60 +758,170 @@ def decode_for_model(path: Path, max_seconds: int) -> tuple[object, float]:
     return audio, duration
 
 
+def decode_window(path: Path, start: float, end: float, timeout_sec: int) -> object:
+    """Одно окно в float32 mono 16 kHz. В память процесса попадает только оно."""
+    import numpy as np
+
+    cmd = window_ffmpeg_args(str(path), start, end)
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            check=False,
+            timeout=timeout_sec,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(504, "ffmpeg timeout") from exc
+    if proc.returncode != 0:
+        detail = (proc.stderr or b"could not decode audio").decode("utf-8", "replace").strip()[-400:]
+        raise HTTPException(400, detail or "could not decode audio")
+    raw = proc.stdout or b""
+    raw = raw[: len(raw) - (len(raw) % 4)]
+    audio = np.frombuffer(raw, dtype=np.float32).copy()
+    del proc, raw
+    return audio
+
+
+def detect_silences(path: Path, settings: Settings, duration: float) -> list[tuple[float, float]]:
+    """Один проход ffmpeg без хранения PCM. Ошибка не валит распознавание: остаётся перекрытие."""
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-nostats",
+        "-nostdin",
+        "-i",
+        str(path),
+        "-vn",
+        "-sn",
+        "-dn",
+        "-af",
+        f"silencedetect=noise={settings.silence_noise_db:.1f}dB:d={settings.silence_min_sec:.3f}",
+        "-f",
+        "null",
+        "-",
+    ]
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=settings.extract_timeout_sec,
+        )
+    except subprocess.TimeoutExpired:
+        log.warning("silencedetect timed out, using overlap cuts")
+        return []
+    if proc.returncode != 0:
+        log.warning("silencedetect failed, using overlap cuts")
+        return []
+    return parse_silencedetect(proc.stderr or "", offset=0.0, end=duration)
+
+
+def _piece_view(piece: AudioPiece, discarded: int) -> dict[str, object]:
+    return {
+        "index": piece.index,
+        "start_sec": piece.start,
+        "end_sec": piece.end,
+        "keep_from_sec": piece.keep_from,
+        "keep_to_sec": piece.keep_to,
+        "cut": piece.cut,
+        "discarded_overlap": discarded,
+    }
+
+
 def transcribe_file(path: Path, body: TranscribeRequest, settings: Settings) -> dict[str, object]:
     language = body.language.strip().lower()
     if len(language) < 2 or len(language) > 3 or not language.isalpha():
         raise HTTPException(400, "language must be a short code")
     name = check_model_name(body.model or settings.model)
-    prompt, truncated = truncate_prompt(body.initial_prompt)
+    prompt, hotwords, truncated = resolve_request_prompts(body, settings)
     beam = body.beam_size if body.beam_size is not None else settings.beam_size
     vad = settings.vad_filter if body.vad_filter is None else body.vad_filter
-    audio, decoded_duration = decode_for_model(path, settings.max_audio_sec)
-    model, load_sec = load_model(name, settings)
-    started = time.perf_counter()
-    segments_iter, info = model.transcribe(
-        audio,
-        language=language,
-        initial_prompt=prompt,
-        beam_size=beam,
-        vad_filter=vad,
-        condition_on_previous_text=True,
-        without_timestamps=False,
-    )
-    segments: list[dict[str, object]] = []
-    parts: list[str] = []
-    for segment in segments_iter:
-        text = (segment.text or "").strip()
-        if not text:
-            continue
-        start_ms = int(round(float(segment.start) * 1000))
-        end_ms = int(round(float(segment.end) * 1000))
-        if end_ms < start_ms:
-            end_ms = start_ms
-        parts.append(text)
-        segments.append(
-            {
-                "ordinal": len(segments) + 1,
-                "start_ms": start_ms,
-                "end_ms": end_ms,
-                "text": text,
-            }
-        )
-    transcribe_sec = time.perf_counter() - started
-    duration = float(getattr(info, "duration", 0.0) or 0.0)
+    probed = probe_audio(path)
+    duration = float(probed["duration_sec"])
     if duration <= 0:
-        duration = decoded_duration
+        raise HTTPException(400, "no audio")
+    if duration > settings.max_audio_sec:
+        raise HTTPException(400, "audio is longer than WHISPER_MAX_AUDIO_SEC")
+    pieces = plan_pieces(
+        duration,
+        detect_silences(path, settings, duration),
+        chunk_sec=settings.chunk_sec,
+        overlap_sec=settings.chunk_overlap_sec,
+        search_sec=settings.silence_search_sec,
+    )
+    if not pieces:
+        raise HTTPException(400, "no audio")
+    cap = settings.chunk_sec + settings.chunk_overlap_sec + 1.0
+    for piece in pieces:
+        if piece.end - piece.start > cap:
+            raise HTTPException(500, "audio window exceeds chunk limit")
+    model, load_sec = load_model(name, settings)
+    kwargs: dict[str, object] = {
+        "language": language,
+        "initial_prompt": prompt,
+        "beam_size": beam,
+        "vad_filter": vad,
+        "condition_on_previous_text": settings.condition_on_previous_text,
+        "without_timestamps": False,
+    }
+    if hotwords:
+        kwargs["hotwords"] = hotwords
+    if settings.hallucination_silence_sec is not None:
+        kwargs["word_timestamps"] = True
+        kwargs["hallucination_silence_threshold"] = settings.hallucination_silence_sec
+    groups: list[list[object]] = []
+    model_duration = 0.0
+    transcribe_sec = 0.0
+    piece_started = time.perf_counter()
+    for piece in pieces:
+        touch_activity()
+        audio = decode_window(path, piece.start, piece.end, settings.extract_timeout_sec)
+        if getattr(audio, "size", 0) == 0:
+            if len(pieces) == 1:
+                raise HTTPException(400, "no audio")
+            log.warning("empty audio window index=%s", piece.index)
+            del audio
+            groups.append([])
+            continue
+        try:
+            started = time.perf_counter()
+            segments_iter, info = model.transcribe(audio, **kwargs)
+            groups.append(list(segments_iter))
+            transcribe_sec += time.perf_counter() - started
+            if len(pieces) == 1:
+                model_duration = float(getattr(info, "duration", 0.0) or 0.0)
+        finally:
+            del audio
+            release_heap()
+    loop_sec = time.perf_counter() - piece_started
+    merged, discarded = assemble_segments(pieces, groups)
+    kept, dropped = filter_hallucinations(merged, settings.hallucination_phrases)
+    segments = number_segments(kept)
+    if len(pieces) == 1 and model_duration > 0:
+        reported_duration = model_duration
+    else:
+        reported_duration = duration
+    listed = dropped[:100]
     return {
-        "text": " ".join(parts),
+        "text": " ".join(str(segment["text"]) for segment in segments),
         "segments": segments,
         "model": name,
         "compute_type": settings.compute_type,
         "language": language,
-        "duration_sec": round(duration, 3),
-        "elapsed_sec": round(load_sec + transcribe_sec, 3),
+        "duration_sec": round(reported_duration, 3),
+        "elapsed_sec": round(load_sec + loop_sec, 3),
         "model_load_sec": round(load_sec, 3),
         "transcribe_sec": round(transcribe_sec, 3),
         "initial_prompt_truncated": truncated,
+        "audio_pieces": [_piece_view(piece, count) for piece, count in zip(pieces, discarded)],
+        "hallucination_filter": {
+            "dropped_count": len(dropped),
+            "dropped_omitted": max(0, len(dropped) - len(listed)),
+            "dropped": listed,
+            "condition_on_previous_text": settings.condition_on_previous_text,
+            "silence_threshold_sec": settings.hallucination_silence_sec,
+        },
     }
 
 
@@ -739,6 +1026,9 @@ def health() -> JSONResponse:
         "idle_unload_sec": settings.idle_unload_sec,
         "idle_exit_sec": settings.idle_exit_sec,
         "disk_free_mb": disk_free_mb(settings.data_dir),
+        "chunk_sec": settings.chunk_sec,
+        "prompts_file_set": settings.prompts_file is not None,
+        "prompts_loaded": bool(load_prompt_table(settings.prompts_file)),
     }
     return JSONResponse(status_code=200 if ready else 503, content=body)
 
@@ -799,12 +1089,14 @@ def transcribe_route(body: TranscribeRequest) -> dict[str, object]:
     finally:
         end_job()
     log.info(
-        "transcribe tag=%s model=%s duration=%.3f elapsed=%.3f segments=%s",
+        "transcribe tag=%s model=%s duration=%.3f elapsed=%.3f segments=%s pieces=%s dropped=%s",
         path_tag(src),
         result["model"],
         float(result["duration_sec"]),
         float(result["elapsed_sec"]),
         len(result["segments"]),
+        len(result["audio_pieces"]),
+        result["hallucination_filter"]["dropped_count"],
     )
     return result
 
