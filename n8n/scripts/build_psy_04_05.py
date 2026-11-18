@@ -1300,6 +1300,28 @@ for (const Ltr of ['A', 'B', 'C', 'D']) {
   letterCounts[Ltr] = Number(letterCountsRaw[Ltr]) || 0;
 }
 
+// Fill-only / empty filter: never generate or upsert without a real subtopic.
+if (loopSub.skip_all || spend.skip_all || !sub.subtopic_id || !(sub.ordinal > 0)) {
+  return [{
+    json: {
+      ...spend,
+      lecture_id: L.lecture_id,
+      job_id: L.job_id,
+      course_id: L.course_id,
+      subtopic_id: null,
+      ordinal: sub.ordinal,
+      title: sub.title || '',
+      skip: true,
+      skip_reason: 'skip_all_or_no_subtopic',
+      skip_all: true,
+      budget_exceeded: false,
+      questions_json: '[]',
+      step: 'questions',
+    },
+    pairedItem: 0,
+  }];
+}
+
 const parts = buildQuestionsRequestParts({
   subtopic: { ordinal: sub.ordinal, title: sub.title },
   allTerms: T.terms || [],
@@ -1686,7 +1708,8 @@ UPSERT_QUESTIONS_SQL = """WITH params AS (
    AND s.term_canonical IS NOT NULL
    AND btrim(s.term_canonical) <> ''
    AND g.canonical = s.term_canonical
-  WHERE (SELECT ok FROM no_cards)
+  WHERE p.subtopic_id IS NOT NULL
+    AND (SELECT ok FROM no_cards)
     AND (
       (COALESCE(s.source_kind, 'term') = 'term' AND g.id IS NOT NULL)
       OR (
@@ -2161,7 +2184,8 @@ const list = (!only || !only.length)
   ? items
   : items.filter((row) => only.includes(Number(row.ordinal)));
 if (!list.length) {
-  return [{ json: { skip_all: true, ordinal: 0, title: '', subtopic_id: null }, pairedItem: 0 }];
+  // Dummy item: Build Questions must short-circuit (skip=true) — never upsert.
+  return [{ json: { skip_all: true, skip: true, ordinal: -1, title: '', subtopic_id: null }, pairedItem: 0 }];
 }
 return list.map((row, idx) => ({ json: row, pairedItem: idx }));""",
         4580,

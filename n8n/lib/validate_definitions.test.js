@@ -23,6 +23,15 @@ test('isValidDefinition rejects short label', () => {
   assert.equal(r.ok, false);
 });
 
+test('isValidDefinition rejects semicolon summary scrap', () => {
+  const r = isValidDefinition(
+    'фундамент; супружеские отношения первичны',
+    'сексуально-эротическая функция',
+  );
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'label_scrap');
+});
+
 test('applyFilledDefinitions drops invalid LLM defs', () => {
   const { terms, applied, rejected } = applyFilledDefinitions(
     [{ canonical: 'одиночество', definition: null, aliases: [] }],

@@ -275,6 +275,11 @@ function isValidDefinition(text, canonical) {
   // One-word / two-token label without explanation.
   const words = def.split(/\s+/).filter(Boolean);
   if (words.length < 3) return { ok: false, reason: 'label_only' };
+  // Summary scraps: "фундамент; супружеские отношения первичны"
+  if (/^фундамент\b/i.test(def)) return { ok: false, reason: 'label_scrap' };
+  if (/;/.test(def) && words.length < 10 && !/(это|явля|называ|означа)/i.test(def)) {
+    return { ok: false, reason: 'label_scrap' };
+  }
   // Starts mid-thought (lowercase continuation / bare conjunction).
   if (/^(и|а|но|или|на|при|для|что|как|это\s+на\s+\d)/i.test(def) && !/^[А-ЯA-Z«"]/.test(def)) {
     // allow "это …" as definition pattern
