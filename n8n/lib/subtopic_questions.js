@@ -67,6 +67,34 @@ function missWindowCenter(sectionsLength, opts = {}) {
 }
 
 /**
+ * Single ## section for this subtopic (no neighbours).
+ * Used for thesis extraction so foreign-section theses do not leak in.
+ */
+function pickOwnKonspektSection(konspekt, title, terms, opts = {}) {
+  const sections = sectionList(konspekt);
+  if (!sections.length) {
+    return { text: '', matched: false, score: 0, idx: -1 };
+  }
+  const scored = sections.map((text, idx) => ({
+    idx,
+    text,
+    score: scoreSection(text, title, terms),
+  }));
+  scored.sort((a, b) => b.score - a.score || a.idx - b.idx);
+  const best = scored[0];
+  if (best && best.score > 0) {
+    return { text: best.text, matched: true, score: best.score, idx: best.idx };
+  }
+  const approx = missWindowCenter(sections.length, opts);
+  return {
+    text: sections[approx] || '',
+    matched: false,
+    score: 0,
+    idx: approx,
+  };
+}
+
+/**
  * Pick konspekt fragment for one subtopic: best matching ## section ± neighbour,
  * capped. Never falls back to the whole konspekt.
  * opts: { subtopicIndex, subtopicCount } — center miss-window by subtopic position.
@@ -299,7 +327,15 @@ function isValidDefinition(text, canonical) {
   return { ok: true, reason: null };
 }
 
-function needsDefinitionRefill(definition, canonical) {
+function isTextbookLocked(term) {
+  const src = String((term && term.definition_source) || '').toLowerCase();
+  if (src !== 'textbook') return false;
+  const def = term && term.definition;
+  return def != null && String(def).trim() !== '';
+}
+
+function needsDefinitionRefill(definition, canonical, term = null) {
+  if (term && isTextbookLocked(term)) return false;
   if (definition == null || !String(definition).trim()) return true;
   return !isValidDefinition(definition, canonical).ok;
 }
@@ -316,7 +352,7 @@ function fillDefinitionsFromText(terms, konspekt, transcript) {
   const filled = [];
   const rejected = [];
   const next = (terms || []).map((t) => {
-    if (!needsDefinitionRefill(t.definition, t.canonical)) return { ...t };
+    if (isTextbookLocked(t) || !needsDefinitionRefill(t.definition, t.canonical, t)) return { ...t };
     const names = [t.canonical].concat(t.aliases || []).map((n) => String(n || '').trim()).filter(Boolean);
     let definition = null;
     for (const name of names) {
@@ -342,9 +378,14 @@ function fillDefinitionsFromText(terms, konspekt, transcript) {
       }
       if (definition) break;
     }
-    if (!definition) return { ...t, definition: needsDefinitionRefill(t.definition, t.canonical) ? null : t.definition };
+    if (!definition) {
+      return {
+        ...t,
+        definition: needsDefinitionRefill(t.definition, t.canonical, t) ? null : t.definition,
+      };
+    }
     filled.push(t.canonical);
-    return { ...t, definition };
+    return { ...t, definition, definition_source: 'lecture' };
   });
   return { terms: next, filled, rejected };
 }
@@ -371,11 +412,11 @@ function applyFilledDefinitions(terms, filledPayload) {
   }
   const applied = [];
   const next = (terms || []).map((t) => {
-    if (!needsDefinitionRefill(t.definition, t.canonical)) return { ...t };
+    if (isTextbookLocked(t) || !needsDefinitionRefill(t.definition, t.canonical, t)) return { ...t };
     const hit = byCanon.get(String(t.canonical || '').trim().toLowerCase());
     if (!hit) {
       // Drop broken existing definition so it stays empty rather than garbage.
-      if (needsDefinitionRefill(t.definition, t.canonical) && t.definition) {
+      if (needsDefinitionRefill(t.definition, t.canonical, t) && t.definition) {
         return { ...t, definition: null, life_example: null };
       }
       return { ...t };
@@ -385,6 +426,7 @@ function applyFilledDefinitions(terms, filledPayload) {
       ...t,
       definition: hit.definition,
       life_example: hit.life_example || t.life_example || null,
+      definition_source: 'lecture',
     };
   });
   return { terms: next, applied, rejected };
@@ -634,7 +676,11 @@ function buildQuestionsRequestParts(input) {
   const transcriptMax = constants.questions_transcript_max_chars || DEFAULTS.transcriptMaxChars;
 
   const resolved = resolveTermsForSubtopic(subtopic.ordinal, allTerms, courseTerms, { ownOnly });
-  // Fragment by title (+ own terms if any). Never dump whole konspekt / clone foreign terms.
+  const ownSection = pickOwnKonspektSection(konspektMd, subtopic.title, resolved.terms, {
+    subtopicIndex,
+    subtopicCount,
+  });
+  // Context fragment may include ±1 neighbour; theses come ONLY from own ## section.
   const konspektFrag = pickKonspektFragment(
     konspektMd,
     subtopic.title,
@@ -650,7 +696,7 @@ function buildQuestionsRequestParts(input) {
     transcript,
     { subtopicIndex, subtopicCount },
   );
-  const theses = extractTheses(konspektFrag.text, 12);
+  const theses = extractTheses(ownSection.text, 12);
   const thesisMode = !resolved.terms.length && theses.length > 0;
 
   if (!resolved.terms.length && !theses.length) {
@@ -673,11 +719,20 @@ function buildQuestionsRequestParts(input) {
 
   const termCanonicals = resolved.terms.map((t) => t.canonical);
   const termsBlock = resolved.terms.length
-    ? resolved.terms.map((t) => '- ' + t.canonical + ': ' + t.definition).join('\n')
+    ? resolved.terms
+        .map((t) => {
+          const src = String(t.definition_source || '').toLowerCase() === 'textbook' ? 'учебник' : 'лекция';
+          const note =
+            src === 'учебник'
+              ? ' [источник: учебник — не пиши «по лекции» / «лектор сказал»]'
+              : '';
+          return '- ' + t.canonical + ': ' + t.definition + note;
+        })
+        .join('\n')
     : '[пусто — пиши только по ТЕЗИСАМ; source_kind=thesis, term_canonical=null]';
   const thesesBlock = theses.length
     ? theses.map((t, i) => (i + 1) + '. ' + t).join('\n')
-    : '[тезисы не извлечены — опирайся на фрагмент конспекта]';
+    : '[тезисы не извлечены из своей секции — опирайся только на блок этой подтемы]';
   const transcriptText = transcriptFrag.text
     || '[фрагмент не найден — опирайся только на конспект]';
   const usedPlotsBlock = (usedPlots || []).length
@@ -704,6 +759,8 @@ function buildQuestionsRequestParts(input) {
     term_canonicals: termCanonicals,
     theses,
     thesis_mode: thesisMode,
+    own_section_text: ownSection.text,
+    own_section_matched: ownSection.matched,
     konspekt_fragment: konspektFrag.text,
     konspekt_matched: konspektFrag.matched,
     transcript_fragment: transcriptText,
@@ -720,6 +777,7 @@ module.exports = {
   sectionList,
   scoreSection,
   missWindowCenter,
+  pickOwnKonspektSection,
   pickKonspektFragment,
   transcriptToSegments,
   pickTranscriptFragment,
@@ -728,6 +786,7 @@ module.exports = {
   resolveTermsForSubtopic,
   extractTheses,
   isValidDefinition,
+  isTextbookLocked,
   needsDefinitionRefill,
   fillDefinitionsFromText,
   applyFilledDefinitions,

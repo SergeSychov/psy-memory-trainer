@@ -32,6 +32,29 @@ test('isValidDefinition rejects semicolon summary scrap', () => {
   assert.equal(r.reason, 'label_scrap');
 });
 
+test('textbook definitions are not overwritten by fill', () => {
+  const { fillDefinitionsFromText, applyFilledDefinitions, isTextbookLocked } = require('./subtopic_questions.js');
+  const locked = {
+    canonical: 'одиночество',
+    definition: 'Неприятное субъективное переживание при нехватке связей.',
+    definition_source: 'textbook',
+    aliases: [],
+  };
+  assert.equal(isTextbookLocked(locked), true);
+  const heur = fillDefinitionsFromText(
+    [locked],
+    'одиночество — другое определение из лекции про цифры на 26%.',
+    '',
+  );
+  assert.equal(heur.filled.length, 0);
+  assert.equal(heur.terms[0].definition, locked.definition);
+  const llm = applyFilledDefinitions([locked], {
+    terms: [{ canonical: 'одиночество', definition: 'одиночество — выдумка модели из воздуха.', life_example: null }],
+  });
+  assert.equal(llm.applied.length, 0);
+  assert.equal(llm.terms[0].definition, locked.definition);
+});
+
 test('applyFilledDefinitions drops invalid LLM defs', () => {
   const { terms, applied, rejected } = applyFilledDefinitions(
     [{ canonical: 'одиночество', definition: null, aliases: [] }],

@@ -7,8 +7,12 @@
 
 const QUESTIONS_MIN = 8;
 const QUESTIONS_MAX = 12;
-const STEM_SIMILARITY_THRESHOLD = 0.72;
+/** Stem Jaccard threshold for paraphrase (was 0.72; 0.71 pairs slipped through). */
+const STEM_SIMILARITY_THRESHOLD = 0.65;
 const FOCUS_ANSWER_SIMILARITY_THRESHOLD = 0.82;
+/** Same/near-same correct answer + weaker stem overlap still counts as paraphrase. */
+const SAME_ANSWER_STEM_THRESHOLD = 0.6;
+const SAME_ANSWER_SIMILARITY = 0.82;
 const MAX_LETTER_SHARE = 0.35;
 
 function normalizeChoice(text) {
@@ -82,6 +86,21 @@ function normalizeQuestionShape(q) {
 /**
  * Drop near-duplicate stems and duplicate focus–answer pairs (incl. paraphrases).
  */
+function isStemAnswerParaphrase(a, b, opts = {}) {
+  const threshold = opts.similarityThreshold != null ? opts.similarityThreshold : STEM_SIMILARITY_THRESHOLD;
+  const sameAnswerStem =
+    opts.sameAnswerStemThreshold != null ? opts.sameAnswerStemThreshold : SAME_ANSWER_STEM_THRESHOLD;
+  const sameAnswerSim =
+    opts.sameAnswerSimilarity != null ? opts.sameAnswerSimilarity : SAME_ANSWER_SIMILARITY;
+  const stemSim = stemSimilarity(a.stem, b.stem);
+  if (stemSim >= threshold) return { hit: true, reason: 'similar_stem', stemSim };
+  const ansSim = stemSimilarity(correctChoiceText(a), correctChoiceText(b));
+  if (ansSim >= sameAnswerSim && stemSim >= sameAnswerStem) {
+    return { hit: true, reason: 'similar_stem_same_answer', stemSim, ansSim };
+  }
+  return { hit: false, stemSim, ansSim };
+}
+
 function dedupeQuestions(questions, opts = {}) {
   const threshold = opts.similarityThreshold != null ? opts.similarityThreshold : STEM_SIMILARITY_THRESHOLD;
   const focusThreshold =
@@ -127,6 +146,16 @@ function dedupeQuestions(questions, opts = {}) {
         }
       }
     }
+    if (!dup) {
+      for (const prevQ of kept) {
+        const check = isStemAnswerParaphrase(q, prevQ, opts);
+        if (check.hit) {
+          dup = true;
+          reason = check.reason;
+          break;
+        }
+      }
+    }
     if (dup) dropped.push({ question: q, reason });
     else {
       kept.push(q);
@@ -154,7 +183,8 @@ function findParaphrasePairs(questions, opts = {}) {
       const focusSim = stemSimilarity(questionFocus(a), questionFocus(b));
       const ansSim = stemSimilarity(correctChoiceText(a), correctChoiceText(b));
       let reason = null;
-      if (stemSim >= threshold) reason = 'similar_stem';
+      const stemAns = isStemAnswerParaphrase(a, b, opts);
+      if (stemAns.hit) reason = stemAns.reason;
       else if (
         focusSim >= focusThreshold &&
         ansSim >= focusThreshold &&
@@ -536,6 +566,8 @@ module.exports = {
   QUESTIONS_MAX,
   STEM_SIMILARITY_THRESHOLD,
   FOCUS_ANSWER_SIMILARITY_THRESHOLD,
+  SAME_ANSWER_STEM_THRESHOLD,
+  SAME_ANSWER_SIMILARITY,
   MAX_LETTER_SHARE,
   validateQuestionsPayload,
   normalizeChoice,
@@ -546,6 +578,7 @@ module.exports = {
   focusAnswerKey,
   questionFocus,
   correctChoiceText,
+  isStemAnswerParaphrase,
   dedupeQuestions,
   findParaphrasePairs,
   isCaseOrActionQuestion,

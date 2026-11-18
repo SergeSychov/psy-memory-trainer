@@ -37,7 +37,7 @@ DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
 
 WF_VER = {
     "psy_04": "psy_04_konspekt_v1",
-    "psy_05": "psy_05_terms_questions_v7",
+    "psy_05": "psy_05_terms_questions_v8",
 }
 
 # psy_03 lives in n8n already; id only used as sanity check / fallback when .id is missing.
@@ -933,7 +933,7 @@ const constants = {
   questions_max: 12,
   max_questions_per_subtopic: 12,
   max_letter_share: 0.35,
-  stem_similarity_threshold: 0.72,
+  stem_similarity_threshold: 0.65,
   questions_konspekt_max_chars: 5500,
   questions_transcript_max_chars: 7000,
   questions_thin_min_chars: 400,
@@ -1158,16 +1158,23 @@ return [{ json: result, pairedItem: 0 }];"""
 UPSERT_TERMS_SQL = """WITH params AS (
   SELECT $1::uuid AS course_id, $2::uuid AS lecture_id, $3::jsonb AS terms
 ), src AS (
-  SELECT t.canonical, t.aliases, t.definition, t.life_example
+  SELECT t.canonical, t.aliases, t.definition, t.life_example, t.definition_source
   FROM params p
   CROSS JOIN LATERAL jsonb_to_recordset(p.terms) AS t(
-    canonical text, aliases jsonb, definition text, life_example text
+    canonical text, aliases jsonb, definition text, life_example text, definition_source text
   )
 ), up AS (
-  INSERT INTO psy.glossary_terms AS g (course_id, lecture_id, canonical, aliases, definition, life_example)
+  INSERT INTO psy.glossary_terms AS g (
+    course_id, lecture_id, canonical, aliases, definition, life_example, definition_source
+  )
   SELECT p.course_id, p.lecture_id, s.canonical,
          ARRAY(SELECT jsonb_array_elements_text(COALESCE(s.aliases, '[]'::jsonb))),
-         s.definition, s.life_example
+         s.definition, s.life_example,
+         CASE
+           WHEN NULLIF(btrim(s.definition), '') IS NULL THEN NULL
+           WHEN lower(COALESCE(s.definition_source, '')) = 'textbook' THEN 'textbook'
+           ELSE 'lecture'
+         END
   FROM params p
   CROSS JOIN src s
   ON CONFLICT (course_id, canonical) DO UPDATE SET
@@ -1178,17 +1185,31 @@ UPSERT_TERMS_SQL = """WITH params AS (
       WHERE btrim(a) <> '' AND a <> g.canonical
       ORDER BY a
     ),
+    -- Never overwrite curated textbook definitions.
     definition = CASE
+      WHEN g.definition_source = 'textbook' THEN g.definition
       WHEN NULLIF(btrim(g.definition), '') IS NULL THEN EXCLUDED.definition
       WHEN g.lecture_id IS NOT DISTINCT FROM EXCLUDED.lecture_id AND EXCLUDED.definition IS NOT NULL
         THEN EXCLUDED.definition
       ELSE g.definition
     END,
     life_example = CASE
+      WHEN g.definition_source = 'textbook' THEN g.life_example
       WHEN NULLIF(btrim(g.definition), '') IS NULL THEN EXCLUDED.life_example
       WHEN g.lecture_id IS NOT DISTINCT FROM EXCLUDED.lecture_id AND EXCLUDED.definition IS NOT NULL
         THEN EXCLUDED.life_example
       ELSE g.life_example
+    END,
+    definition_source = CASE
+      WHEN g.definition_source = 'textbook' THEN 'textbook'
+      WHEN NULLIF(btrim(g.definition), '') IS NULL
+        AND NULLIF(btrim(EXCLUDED.definition), '') IS NOT NULL
+        THEN COALESCE(EXCLUDED.definition_source, 'lecture')
+      WHEN g.lecture_id IS NOT DISTINCT FROM EXCLUDED.lecture_id
+        AND EXCLUDED.definition IS NOT NULL
+        AND COALESCE(g.definition_source, '') <> 'textbook'
+        THEN COALESCE(EXCLUDED.definition_source, 'lecture')
+      ELSE g.definition_source
     END
   RETURNING g.id
 )
@@ -1443,14 +1464,15 @@ const det = fillDefinitionsFromText(
   L.konspekt_md || '',
   L.transcript || '',
 );
-// Drop broken definitions so fill LLM can rewrite them.
+// Drop broken definitions so fill LLM can rewrite them (never touch textbook).
 const cleaned = det.terms.map((t) => {
-  if (needsDefinitionRefill(t.definition, t.canonical)) {
+  if (isTextbookLocked(t)) return t;
+  if (needsDefinitionRefill(t.definition, t.canonical, t)) {
     return { ...t, definition: null, life_example: null };
   }
   return t;
 });
-const emptyDefs = cleaned.filter((t) => needsDefinitionRefill(t.definition, t.canonical));
+const emptyDefs = cleaned.filter((t) => needsDefinitionRefill(t.definition, t.canonical, t));
 return [{
   json: {
     ...item,
@@ -1512,7 +1534,7 @@ if (!p.content.trim()) {
       existingTermAnswers: b.used_term_answers || [],
       minQuestions: C.questions_min || 8,
       maxQuestions: C.questions_max || 12,
-      similarityThreshold: C.stem_similarity_threshold || 0.72,
+      similarityThreshold: C.stem_similarity_threshold || 0.65,
       allowThesis: true,
       thesisOnly: Boolean(b.thesis_mode),
     });
@@ -1552,7 +1574,7 @@ const finOpts = {
   existingTermAnswers: b.used_term_answers || [],
   letterCounts: b.letter_counts || {},
   maxLetterShare: C.max_letter_share || 0.35,
-  similarityThreshold: C.stem_similarity_threshold || 0.72,
+  similarityThreshold: C.stem_similarity_threshold || 0.65,
   seedPrefix: String(b.subtopic_id || b.ordinal || ''),
 };
 const base = {
@@ -1644,7 +1666,7 @@ const fin = packQuestions(merged, maxQ, {
   existingTermAnswers: d.used_term_answers || [],
   letterCounts: d.letter_counts || {},
   maxLetterShare: C.max_letter_share || 0.35,
-  similarityThreshold: C.stem_similarity_threshold || 0.72,
+  similarityThreshold: C.stem_similarity_threshold || 0.65,
   seedPrefix: String(d.subtopic_id || d.ordinal || ''),
 });
 return [{
@@ -1860,6 +1882,7 @@ def build_psy_05() -> tuple[str, list, dict]:
       'aliases', to_jsonb(COALESCE(g.aliases, ARRAY[]::text[])),
       'definition', g.definition,
       'life_example', g.life_example,
+      'definition_source', g.definition_source,
       'subtopic_ordinal', 1
     ) ORDER BY g.canonical)
     FROM psy.glossary_terms g
@@ -1932,6 +1955,7 @@ terms = (Array.isArray(terms) ? terms : []).map((t) => ({
   aliases: t.aliases || [],
   definition: t.definition,
   life_example: t.life_example,
+  definition_source: t.definition_source || null,
   subtopic_ordinal: Number(t.subtopic_ordinal) || 1,
 }));
 return [{
