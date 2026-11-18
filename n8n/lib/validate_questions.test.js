@@ -105,11 +105,36 @@ test('dedupeQuestions drops similar stems and term-answer pairs', () => {
     stem: 'Третья уникальная сцена на работе с коллегой про дедлайн.',
     a: 'повесить на дверь', // same term + same correct as a
   });
-  assert.ok(stemSimilarity(a.stem, b.stem) >= 0.72);
+  assert.ok(stemSimilarity(a.stem, b.stem) >= 0.65);
   const { kept, dropped } = dedupeQuestions([a, b, c, d], { existingStems: [], existingTermAnswers: [] });
   assert.equal(kept.length, 2);
   assert.ok(dropped.some((x) => x.reason === 'similar_stem'));
   assert.ok(dropped.some((x) => x.reason === 'duplicate_focus_answer' || x.reason === 'duplicate_term_answer'));
+});
+
+test('dedupe catches stem~0.71 paraphrase that old 0.72 threshold missed', () => {
+  // Jaccard on tokens len>=3: share 10, A-only 2, B-only 2 → inter=10 union=14 → ≈0.714.
+  // Different correct answers so focus||answer key does not short-circuit.
+  const shared =
+    'консультации супруги рассказывают решения принимают совместно власть обязанности делят поровну';
+  const a = baseQ(1, {
+    stem: `${shared} семья вместе`,
+    a: 'первый ответ про равные доли',
+    term: 'эгалитарная семья',
+  });
+  const b = baseQ(2, {
+    stem: `${shared} пара равные`,
+    a: 'второй ответ про совместные решения',
+    term: 'эгалитарная семья',
+  });
+  const sim = stemSimilarity(a.stem, b.stem);
+  assert.ok(sim >= 0.65 && sim < 0.72, `expected ~0.65–0.72 got ${sim}`);
+  const { kept, dropped } = dedupeQuestions([a, b], { existingStems: [], existingTermAnswers: [] });
+  assert.equal(kept.length, 1);
+  assert.ok(dropped.some((x) => x.reason === 'similar_stem' || x.reason === 'similar_stem_same_answer'));
+  const pairs = findParaphrasePairs([a, b]);
+  assert.ok(pairs.length >= 1);
+  assert.equal(pairs[0].reason, 'similar_stem');
 });
 
 test('shuffleQuestionChoices is deterministic by seed', () => {

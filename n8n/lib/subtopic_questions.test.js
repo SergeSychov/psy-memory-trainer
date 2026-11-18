@@ -280,6 +280,58 @@ test('buildQuestionsRequestParts thesis mode when own terms missing but fragment
   assert.ok(parts.user_base.includes('source_kind=thesis'));
 });
 
+test('theses come only from own ## section, not neighbour sections', () => {
+  const { extractTheses, pickOwnKonspektSection } = require('./subtopic_questions');
+  const md = `# Тема
+
+## 1. Рамка курса
+
+Семья древнее государства и религии. Кризис семьи не означает исчезновения. Сдвиг от хозяйства к эмоциональным отношениям.
+
+## 2. Становление дисциплины
+
+Остаточный принцип в социальной психологии. Учебник Карабановой. Нет профильного журнала. Спад диссертаций.
+`;
+  const parts1 = buildQuestionsRequestParts({
+    subtopic: { ordinal: 1, title: 'Рамка курса' },
+    allTerms: [],
+    courseTerms: [],
+    konspektMd: md,
+    chunks: [],
+    subtopicIndex: 0,
+    subtopicCount: 2,
+    constants: {
+      questions_konspekt_max_chars: DEFAULTS.konspektMaxChars,
+      questions_transcript_max_chars: DEFAULTS.transcriptMaxChars,
+    },
+  });
+  assert.equal(parts1.thesis_mode, true);
+  const joined = parts1.theses.join(' ').toLowerCase();
+  assert.ok(/древнее|кризис|эмоциональн/.test(joined));
+  assert.ok(!/карабанов|журнала|остаточн/.test(joined));
+  const own = pickOwnKonspektSection(md, 'Рамка курса', [], { subtopicIndex: 0, subtopicCount: 2 });
+  assert.ok(own.matched);
+  assert.ok(!own.text.includes('Карабановой'));
+  assert.ok(extractTheses(own.text).length >= 1);
+
+  const parts2 = buildQuestionsRequestParts({
+    subtopic: { ordinal: 2, title: 'Становление дисциплины' },
+    allTerms: [],
+    courseTerms: [],
+    konspektMd: md,
+    chunks: [],
+    subtopicIndex: 1,
+    subtopicCount: 2,
+    constants: {
+      questions_konspekt_max_chars: DEFAULTS.konspektMaxChars,
+      questions_transcript_max_chars: DEFAULTS.transcriptMaxChars,
+    },
+  });
+  const j2 = parts2.theses.join(' ').toLowerCase();
+  assert.ok(/карабанов|остаточн|журнал|диссертац/.test(j2));
+  assert.ok(!/древнее государства/.test(j2));
+});
+
 test('buildQuestionsRequestParts skips when no terms and no theses', () => {
   const parts = buildQuestionsRequestParts({
     subtopic: { ordinal: 9, title: 'Абсолютно пустой раздел xyz' },
