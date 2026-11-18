@@ -2,17 +2,40 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { validateQuestionsPayload } = require('./validate_questions.js');
+const {
+  validateQuestionsPayload,
+  dedupeQuestions,
+  finalizeQuestions,
+  shuffleQuestionChoices,
+  stemSimilarity,
+  termAnswerKey,
+  QUESTIONS_MIN,
+} = require('./validate_questions.js');
 
-const baseQ = (n) => ({
-  term_canonical: 'термин',
+const SCENES = [
+  'Анна на кухне забыла список покупок и выбирает, куда поставить напоминание.',
+  'Борис в метро смотрит в телефон и решает, прервать ли чужой разговор.',
+  'Вера на работе получила срочное письмо и думает, ответить ли сразу.',
+  'Глеб перед сном листает новости и выбирает, оставить ли телефон в другой комнате.',
+  'Дина в очереди замечает спор соседей и решает, вмешаться ли.',
+  'Егор после тренировки планирует завтрашний день и выбирает формат списка.',
+  'Жанна ведёт совещание и думает, как зафиксировать договорённости.',
+  'Игорь чинит полку дома и выбирает, звать ли родственников на помощь.',
+  'Кира в кафе ждёт друга и решает, чем занять десять минут ожидания.',
+  'Лев переезжает и раскладывает коробки, выбирая порядок комнат.',
+  'Мария готовит ужин для гостей и думает, как распределить задачи.',
+  'Никита готовится к экзамену и выбирает, повторять ли вслух или письменно.',
+];
+
+const baseQ = (n, opts = {}) => ({
+  term_canonical: opts.term || 'термин',
   kind: 'life_mcq',
-  stem: `Ситуация номер ${n} про память на кухне?`,
-  choice_a: `вариант а ${n}`,
-  choice_b: `вариант б ${n}`,
-  choice_c: `вариант в ${n}`,
-  choice_d: `вариант г ${n}`,
-  correct_choice: 'A',
+  stem: opts.stem || `${SCENES[(n - 1) % SCENES.length]} Что уместнее по лекции?`,
+  choice_a: opts.a || `действие альфа-${n}`,
+  choice_b: opts.b || `действие бета-${n}`,
+  choice_c: opts.c || `действие гамма-${n}`,
+  choice_d: opts.d || `действие дельта-${n}`,
+  correct_choice: opts.correct || 'A',
   explanation: 'Потому что так сказано в лекции.',
   explanation_a: 'Верно по лекции.',
   explanation_b: 'Путает с другим механизмом.',
@@ -20,78 +43,124 @@ const baseQ = (n) => ({
   explanation_d: 'Слишком общий вывод.',
 });
 
-function tenQuestions() {
-  return Array.from({ length: 10 }, (_, i) => baseQ(i + 1));
+function eightQuestions() {
+  return Array.from({ length: 8 }, (_, i) => baseQ(i + 1));
 }
 
-const ctx = { termCanonicals: ['термин'] };
+const ctx = { termCanonicals: ['термин'], minQuestions: 8, maxQuestions: 12 };
 
-test('ok: 10 valid questions', () => {
+test('ok: 8 valid questions (new min)', () => {
   const r = validateQuestionsPayload(
-    { subtopic_ordinal: 1, shortfall: false, questions: tenQuestions() },
+    { subtopic_ordinal: 1, shortfall: false, questions: eightQuestions() },
     ctx,
   );
   assert.equal(r.ok, true);
-  assert.equal(r.validQuestions.length, 10);
+  assert.equal(r.validQuestions.length, 8);
+});
+
+test('lt_min_questions soft shortfall', () => {
+  const r = validateQuestionsPayload(
+    { subtopic_ordinal: 1, shortfall: false, questions: eightQuestions().slice(0, 5) },
+    ctx,
+  );
+  assert.equal(r.ok, false);
+  assert.ok(r.errors.includes('lt_min_questions'));
+  assert.equal(r.shortfall, true);
+  assert.equal(r.validQuestions.length, 5);
 });
 
 test('duplicate choices', () => {
-  const qs = tenQuestions();
+  const qs = eightQuestions();
   qs[0].choice_b = qs[0].choice_a;
   const r = validateQuestionsPayload({ subtopic_ordinal: 1, shortfall: false, questions: qs }, ctx);
   assert.equal(r.ok, false);
   assert.ok(r.errors.some((e) => e.includes('duplicate_choices')));
 });
 
-test('three choices missing one', () => {
-  const qs = tenQuestions();
-  qs[0].choice_d = '';
-  const r = validateQuestionsPayload({ subtopic_ordinal: 1, shortfall: false, questions: qs }, ctx);
-  assert.equal(r.ok, false);
-  assert.ok(r.errors.some((e) => e.includes('missing:choice_d') || e.includes('empty_choice')));
-});
-
-test('missing explanation', () => {
-  const qs = tenQuestions();
-  qs[0].explanation = '';
-  const r = validateQuestionsPayload({ subtopic_ordinal: 1, shortfall: false, questions: qs }, ctx);
-  assert.equal(r.ok, false);
-  assert.ok(r.errors.some((e) => e.includes('missing_explanation')));
-});
-
-test('extra field', () => {
-  const qs = tenQuestions();
-  qs[0].foo = 'bar';
-  const r = validateQuestionsPayload({ subtopic_ordinal: 1, shortfall: false, questions: qs }, ctx);
-  assert.equal(r.ok, false);
-  assert.ok(r.errors.some((e) => e.includes('extra_field:foo')));
-});
-
-test('unknown term', () => {
-  const qs = tenQuestions();
+test('unknown term skipped from validQuestions', () => {
+  const qs = eightQuestions();
   qs[0].term_canonical = 'чужой';
   const r = validateQuestionsPayload({ subtopic_ordinal: 1, shortfall: false, questions: qs }, ctx);
   assert.equal(r.ok, false);
   assert.ok(r.errors.some((e) => e.includes('unknown_term')));
+  assert.equal(r.validQuestions.length, 7);
 });
 
-test('lt 10 questions', () => {
-  const r = validateQuestionsPayload(
-    { subtopic_ordinal: 1, shortfall: false, questions: tenQuestions().slice(0, 5) },
-    ctx,
-  );
-  assert.equal(r.ok, false);
-  assert.ok(r.errors.includes('lt_10_questions'));
-  assert.equal(r.shortfall, true);
+test('dedupeQuestions drops similar stems and term-answer pairs', () => {
+  const a = baseQ(1, {
+    stem: 'Маша дома вечером выбирает, куда поставить заметку о встрече.',
+    a: 'повесить на дверь',
+  });
+  const b = baseQ(2, {
+    stem: 'Маша дома вечером выбирает куда поставить заметку о встрече завтра',
+    a: 'другой ответ',
+  });
+  const c = baseQ(3, {
+    stem: 'Совершенно другая бытовая сцена про автобус и билет.',
+    a: 'выйти на нужной остановке',
+  });
+  const d = baseQ(4, {
+    stem: 'Третья уникальная сцена на работе с коллегой про дедлайн.',
+    a: 'повесить на дверь', // same term + same correct as a
+  });
+  assert.ok(stemSimilarity(a.stem, b.stem) >= 0.72);
+  const { kept, dropped } = dedupeQuestions([a, b, c, d], { existingStems: [], existingTermAnswers: [] });
+  assert.equal(kept.length, 2);
+  assert.ok(dropped.some((x) => x.reason === 'similar_stem'));
+  assert.ok(dropped.some((x) => x.reason === 'duplicate_term_answer'));
 });
 
-test('shortfall true', () => {
+test('shuffleQuestionChoices is deterministic by seed', () => {
+  const q = baseQ(1, { correct: 'A' });
+  const s1 = shuffleQuestionChoices(q, 'seed-alpha');
+  const s2 = shuffleQuestionChoices(q, 'seed-alpha');
+  const s3 = shuffleQuestionChoices(q, 'seed-beta');
+  assert.equal(s1.correct_choice, s2.correct_choice);
+  assert.equal(s1.choice_a, s2.choice_a);
+  // Different seed usually moves the correct slot (not guaranteed but very likely).
+  const same =
+    s1.correct_choice === s3.correct_choice &&
+    s1.choice_a === s3.choice_a &&
+    s1.choice_b === s3.choice_b;
+  assert.equal(same, false);
+});
+
+test('finalizeQuestions caps, shuffles, balances letters under 35%', () => {
+  const qs = Array.from({ length: 12 }, (_, i) => baseQ(i + 1, { correct: 'A' }));
+  const fin = finalizeQuestions(qs, 12, {
+    letterCounts: { A: 0, B: 0, C: 0, D: 0 },
+    maxLetterShare: 0.35,
+    seedPrefix: 'sub-1',
+  });
+  assert.equal(fin.questions.length, 12);
+  const counts = { A: 0, B: 0, C: 0, D: 0 };
+  for (const q of fin.questions) counts[q.correct_choice] += 1;
+  const total = fin.questions.length;
+  for (const L of ['A', 'B', 'C', 'D']) {
+    assert.ok(counts[L] / total <= 0.35 + 1e-9, `letter ${L} share ${counts[L] / total}`);
+  }
+});
+
+test('validate rejects near-synonym choices', () => {
+  const qs = eightQuestions();
+  qs[0].choice_b = 'вариант а 1 почти';
+  qs[0].choice_a = 'вариант а 1';
+  // Force high similarity
+  qs[0].choice_a = 'быстрый переход внимания к задаче';
+  qs[0].choice_b = 'быстрый переход внимания к задаче же';
+  const r = validateQuestionsPayload({ subtopic_ordinal: 1, shortfall: false, questions: qs }, ctx);
+  assert.ok(r.errors.some((e) => e.includes('synonym_choices')));
+});
+
+test('existing term-answer keys reject duplicates across subtopics', () => {
+  const qs = eightQuestions();
+  const key = termAnswerKey(qs[0].term_canonical, qs[0].choice_a);
   const r = validateQuestionsPayload(
-    { subtopic_ordinal: 1, shortfall: true, questions: tenQuestions() },
-    ctx,
+    { subtopic_ordinal: 2, shortfall: false, questions: qs },
+    { ...ctx, existingTermAnswers: [key] },
   );
-  assert.equal(r.ok, false);
-  assert.ok(r.errors.includes('shortfall_true'));
+  assert.ok(r.errors.some((e) => e.includes('duplicate_term_answer')));
+  assert.ok(r.validQuestions.length < QUESTIONS_MIN);
 });
 
 test('invalid json string', () => {

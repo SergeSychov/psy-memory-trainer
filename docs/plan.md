@@ -236,7 +236,7 @@ flowchart TD
 | `psy_02_extract_audio` | завершение шага 01 | `lecture_id`, файл в `data/` | `POST /extract-audio` сервиса whisper → opus mono 16 kHz. В n8n ffmpeg нет |
 | `psy_03_transcribe` | завершение шага 02 | opus и `initial_prompt` из `glossary_terms` | `lecture_texts.transcript`, строки `chunks` |
 | `psy_04_konspekt` | завершение шага 03 | блоки `МЕТАДАННЫЕ`, `ГЛОССАРИЙ`, `ТРАНСКРИПТ` | `lecture_texts.konspekt_md`, строка `llm_usage` |
-| `psy_05_terms_and_questions` | завершение шага 04 | конспект, транскрипт, глоссарий | термины, подтемы, не меньше 10 MCQ на подтему |
+| `psy_05_terms_and_questions` | завершение шага 04 | конспект, транскрипт, глоссарий | термины, подтемы, 8–12 уникальных MCQ на подтему (меньше OK при shortfall, без клонов) |
 | `psy_06_seed_fsrs_cards` | завершение шага 05 | вопросы | карточки `state = new`, `due = now`; повтор по `question_id` ничего не плодит |
 | `psy_07_morning_due` | cron в часовом поясе студентки | карточки с `due <= now` | сообщения в Telegram, ограниченная пачка |
 | `psy_08_quiz_callback` | callback query Telegram | выбор A/B/C/D | `reviews`, новый `due` через `fsrs/`; при ошибке — `explanation` и другой вопрос того же `term_id` |

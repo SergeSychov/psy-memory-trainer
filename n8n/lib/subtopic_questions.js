@@ -196,14 +196,18 @@ function termsWithDefinition(terms) {
 }
 
 /**
- * Resolve term list for MCQ:
- * subtopic (with definition) → lecture → course glossary.
- * Empty after the whole chain → no LLM.
+ * Resolve term list for MCQ.
+ * Default (ownOnly=true, gen_questions_v4): only this subtopic's terms with definition.
+ * Legacy fallback (ownOnly=false): subtopic → lecture → course.
  */
-function resolveTermsForSubtopic(ordinal, lectureTerms, courseTerms = []) {
+function resolveTermsForSubtopic(ordinal, lectureTerms, courseTerms = [], opts = {}) {
+  const ownOnly = opts.ownOnly !== false;
   const own = termsWithDefinition(termsForOrdinal(lectureTerms, ordinal));
   if (own.length) {
     return { terms: own, fallback: false, source: 'subtopic' };
+  }
+  if (ownOnly) {
+    return { terms: [], fallback: false, source: null };
   }
   const lecture = termsWithDefinition(lectureTerms);
   if (lecture.length) {
@@ -214,6 +218,109 @@ function resolveTermsForSubtopic(ordinal, lectureTerms, courseTerms = []) {
     return { terms: course, fallback: true, source: 'course' };
   }
   return { terms: [], fallback: false, source: null };
+}
+
+/**
+ * Pull short thesis lines from a konspekt/transcript fragment for the MCQ prompt.
+ * Heuristic only — synthetic-safe, no course content in repo.
+ */
+function extractTheses(fragment, maxTheses = 12) {
+  const text = String(fragment || '').trim();
+  if (!text) return [];
+  const lines = [];
+  for (const raw of text.split(/\n+/)) {
+    let line = raw.replace(/^#+\s*/, '').trim();
+    line = line.replace(/^[-*•]\s+/, '').trim();
+    line = line.replace(/^\d+[.)]\s+/, '').trim();
+    if (!line || line.length < 24) continue;
+    if (/^#{1,6}\s/.test(raw)) continue;
+    // Prefer assertive / causal / research-like lines.
+    const score =
+      (/(поэтому|потому|значит|следует|если|когда|исследован|показал|причин)/i.test(line) ? 2 : 0) +
+      (line.length >= 40 && line.length <= 220 ? 1 : 0);
+    if (score > 0 || /^[«"]?[А-ЯA-Z]/.test(line)) {
+      lines.push({ line: line.slice(0, 280), score: score || 1 });
+    }
+  }
+  lines.sort((a, b) => b.score - a.score);
+  const seen = new Set();
+  const out = [];
+  for (const item of lines) {
+    const key = norm(item.line).slice(0, 80);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item.line);
+    if (out.length >= maxTheses) break;
+  }
+  return out;
+}
+
+/**
+ * Deterministic fill of empty definitions from konspekt/transcript patterns:
+ * **term** — def | term — def | term: def
+ * Does not invent text; only copies a nearby clause after the term mention.
+ */
+function fillDefinitionsFromText(terms, konspekt, transcript) {
+  const hay = `${String(konspekt || '')}\n${String(transcript || '')}`;
+  if (!hay.trim()) {
+    return { terms: (terms || []).map((t) => ({ ...t })), filled: [] };
+  }
+  const filled = [];
+  const next = (terms || []).map((t) => {
+    if (t.definition != null && String(t.definition).trim()) return { ...t };
+    const names = [t.canonical].concat(t.aliases || []).map((n) => String(n || '').trim()).filter(Boolean);
+    let definition = null;
+    for (const name of names) {
+      if (name.length < 3) continue;
+      const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const patterns = [
+        new RegExp(`\\*\\*${esc}\\*\\*\\s*[—:\\-]\\s*([^\\n.]{8,200})`, 'i'),
+        new RegExp(`(?:^|\\n)\\s*${esc}\\s*[—:\\-]\\s*([^\\n.]{8,200})`, 'i'),
+        new RegExp(`${esc}\\s+(?:—|–|-)\\s+([^\\n.]{8,200})`, 'i'),
+      ];
+      for (const re of patterns) {
+        const m = hay.match(re);
+        if (m && m[1]) {
+          definition = m[1].trim().replace(/[;,.]+$/, '');
+          break;
+        }
+      }
+      if (definition) break;
+    }
+    if (!definition) return { ...t };
+    filled.push(t.canonical);
+    return { ...t, definition };
+  });
+  return { terms: next, filled };
+}
+
+/**
+ * Merge LLM fill_term_definitions payload into terms (only empty → non-empty).
+ */
+function applyFilledDefinitions(terms, filledPayload) {
+  const byCanon = new Map();
+  for (const row of (filledPayload && filledPayload.terms) || []) {
+    const c = String((row && row.canonical) || '').trim().toLowerCase();
+    if (!c) continue;
+    const def = row.definition == null ? null : String(row.definition).trim() || null;
+    if (!def) continue;
+    const life =
+      def && row.life_example != null ? String(row.life_example).trim() || null : null;
+    byCanon.set(c, { definition: def, life_example: life });
+  }
+  const applied = [];
+  const next = (terms || []).map((t) => {
+    if (t.definition != null && String(t.definition).trim()) return { ...t };
+    const hit = byCanon.get(String(t.canonical || '').trim().toLowerCase());
+    if (!hit) return { ...t };
+    applied.push(t.canonical);
+    return {
+      ...t,
+      definition: hit.definition,
+      life_example: hit.life_example || t.life_example || null,
+    };
+  });
+  return { terms: next, applied };
 }
 
 /**
@@ -438,7 +545,8 @@ function finalizeTermsExtractGate(input) {
 
 /**
  * Build questions-request fields (no LLM).
- * skip=true + skip_reason=no_terms_available when no defined terms in subtopic/lecture/course.
+ * skip=true + skip_reason=no_terms_available when no defined terms in this subtopic
+ * (ownOnly default — no lecture/course clone fallback).
  */
 function buildQuestionsRequestParts(input) {
   const {
@@ -451,11 +559,14 @@ function buildQuestionsRequestParts(input) {
     constants = {},
     subtopicIndex = null,
     subtopicCount = null,
+    usedPlots = [],
+    usedTermAnswers = [],
+    ownOnly = true,
   } = input;
   const konspektMax = constants.questions_konspekt_max_chars || DEFAULTS.konspektMaxChars;
   const transcriptMax = constants.questions_transcript_max_chars || DEFAULTS.transcriptMaxChars;
 
-  const resolved = resolveTermsForSubtopic(subtopic.ordinal, allTerms, courseTerms);
+  const resolved = resolveTermsForSubtopic(subtopic.ordinal, allTerms, courseTerms, { ownOnly });
   if (!resolved.terms.length) {
     return {
       skip: true,
@@ -463,6 +574,7 @@ function buildQuestionsRequestParts(input) {
       terms_fallback: false,
       terms_source: null,
       term_canonicals: [],
+      theses: [],
       konspekt_fragment: '',
       konspekt_matched: false,
       transcript_fragment: '',
@@ -473,6 +585,7 @@ function buildQuestionsRequestParts(input) {
   }
 
   const termCanonicals = resolved.terms.map((t) => t.canonical);
+  // Fragment by title + own terms only (avoid pulling neighbour-topic text via foreign terms).
   const konspektFrag = pickKonspektFragment(
     konspektMd,
     subtopic.title,
@@ -489,15 +602,27 @@ function buildQuestionsRequestParts(input) {
     { subtopicIndex, subtopicCount },
   );
 
+  const theses = extractTheses(konspektFrag.text, 12);
   const termsBlock = resolved.terms.map((t) => '- ' + t.canonical + ': ' + t.definition).join('\n');
+  const thesesBlock = theses.length
+    ? theses.map((t, i) => (i + 1) + '. ' + t).join('\n')
+    : '[тезисы не извлечены — опирайся на фрагмент конспекта]';
   const transcriptText = transcriptFrag.text
     || '[фрагмент не найден — опирайся только на конспект]';
+  const usedPlotsBlock = (usedPlots || []).length
+    ? (usedPlots || []).slice(0, 40).map((s) => '- ' + s).join('\n')
+    : '[пусто]';
+  const usedAnswersBlock = (usedTermAnswers || []).length
+    ? (usedTermAnswers || []).slice(0, 40).map((s) => '- ' + s).join('\n')
+    : '[пусто]';
 
   const user = [
     'ПОДТЕМА\n' + subtopic.ordinal + '. ' + subtopic.title,
+    'ТЕЗИСЫ\n' + thesesBlock,
     'ТЕРМИНЫ\n' + termsBlock,
     'ФРАГМЕНТ КОНСПЕКТА\n' + konspektFrag.text,
     'ФРАГМЕНТ ТРАНСКРИПТА\n' + transcriptText,
+    'УЖЕ_ИСПОЛЬЗОВАНО\nСюжеты:\n' + usedPlotsBlock + '\nПары термин–ответ:\n' + usedAnswersBlock,
   ].join('\n\n');
 
   return {
@@ -506,6 +631,7 @@ function buildQuestionsRequestParts(input) {
     terms_fallback: resolved.fallback,
     terms_source: resolved.source,
     term_canonicals: termCanonicals,
+    theses,
     konspekt_fragment: konspektFrag.text,
     konspekt_matched: konspektFrag.matched,
     transcript_fragment: transcriptText,
@@ -528,6 +654,9 @@ module.exports = {
   termsForOrdinal,
   termsWithDefinition,
   resolveTermsForSubtopic,
+  extractTheses,
+  fillDefinitionsFromText,
+  applyFilledDefinitions,
   mergeThinSubtopics,
   normalizeTermsExtract,
   finalizeTermsExtractGate,

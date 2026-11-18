@@ -213,7 +213,7 @@ test('finalizeTermsExtractGate: hard parse → proceed=false, no synthetic, no c
   assert.match(String(gate.reason), /invalid_json/);
 });
 
-test('resolveTermsForSubtopic: subtopic → lecture → course', () => {
+test('resolveTermsForSubtopic: ownOnly default — no lecture/course clone fallback', () => {
   const lectureTerms = [
     { canonical: 'окно внимания', definition: 'отрезок фокуса', subtopic_ordinal: 1 },
     { canonical: 'якорь', definition: null, subtopic_ordinal: 2 },
@@ -226,12 +226,18 @@ test('resolveTermsForSubtopic: subtopic → lecture → course', () => {
   assert.equal(own.source, 'subtopic');
   assert.equal(own.fallback, false);
 
-  const lec = resolveTermsForSubtopic(2, lectureTerms, courseTerms);
+  // Subtopic 2 has only a term without definition → empty (v4 contract).
+  const emptyOwn = resolveTermsForSubtopic(2, lectureTerms, courseTerms);
+  assert.equal(emptyOwn.source, null);
+  assert.equal(emptyOwn.terms.length, 0);
+
+  // Legacy fallback still available when ownOnly=false.
+  const lec = resolveTermsForSubtopic(2, lectureTerms, courseTerms, { ownOnly: false });
   assert.equal(lec.source, 'lecture');
   assert.equal(lec.fallback, true);
   assert.equal(lec.terms[0].canonical, 'окно внимания');
 
-  const course = resolveTermsForSubtopic(9, [], courseTerms);
+  const course = resolveTermsForSubtopic(9, [], courseTerms, { ownOnly: false });
   assert.equal(course.source, 'course');
   assert.equal(course.terms[0].canonical, 'курс-термин');
 
@@ -256,7 +262,7 @@ test('buildQuestionsRequestParts skips LLM when no terms anywhere', () => {
   assert.deepEqual(parts.term_canonicals, []);
 });
 
-test('buildQuestionsRequestParts uses lecture fallback and builds request', () => {
+test('buildQuestionsRequestParts skips when only other-subtopic terms (no clone fallback)', () => {
   const parts = buildQuestionsRequestParts({
     subtopic: { ordinal: 4, title: 'Связь трёх узлов' },
     allTerms: [
@@ -270,9 +276,41 @@ test('buildQuestionsRequestParts uses lecture fallback and builds request', () =
       questions_transcript_max_chars: DEFAULTS.transcriptMaxChars,
     },
   });
+  assert.equal(parts.skip, true);
+  assert.equal(parts.skip_reason, 'no_terms_available');
+});
+
+test('buildQuestionsRequestParts includes theses and used plots for own terms', () => {
+  const { extractTheses, fillDefinitionsFromText } = require('./subtopic_questions');
+  const parts = buildQuestionsRequestParts({
+    subtopic: { ordinal: 1, title: 'Окно внимания' },
+    allTerms: [
+      { canonical: 'окно внимания', definition: 'отрезок фокуса', subtopic_ordinal: 1, aliases: [] },
+    ],
+    courseTerms: [],
+    konspektMd: KONSPEKT,
+    chunks: [{ text: 'окно внимания в быту' }],
+    usedPlots: ['Старый сюжет про автобус'],
+    usedTermAnswers: ['окно внимания||не отвлекаться'],
+    constants: {
+      questions_konspekt_max_chars: DEFAULTS.konspektMaxChars,
+      questions_transcript_max_chars: DEFAULTS.transcriptMaxChars,
+    },
+  });
   assert.equal(parts.skip, false);
-  assert.equal(parts.terms_source, 'lecture');
-  assert.ok(parts.user_base.includes('ПОДТЕМА'));
+  assert.equal(parts.terms_source, 'subtopic');
+  assert.ok(parts.user_base.includes('ТЕЗИСЫ'));
+  assert.ok(parts.user_base.includes('УЖЕ_ИСПОЛЬЗОВАНО'));
+  assert.ok(parts.user_base.includes('Старый сюжет про автобус'));
+  assert.ok(extractTheses(parts.konspekt_fragment).length >= 1);
+
+  const filled = fillDefinitionsFromText(
+    [{ canonical: 'якорь переключения', definition: null, aliases: [] }],
+    'якорь переключения — короткий жест на границе задач.',
+    '',
+  );
+  assert.equal(filled.filled.length, 1);
+  assert.match(filled.terms[0].definition, /жест/);
 });
 
 test('mergeThinSubtopics folds matched short section into neighbour', () => {

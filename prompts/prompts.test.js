@@ -9,6 +9,8 @@ const FILES = [
   'gen_questions.md',
   'gen_questions_v2.md',
   'gen_questions_v3.md',
+  'gen_questions_v4.md',
+  'fill_term_definitions_v1.md',
   'explain_miss.md',
   'consolidate_quiz.md',
 ];
@@ -54,6 +56,13 @@ test('контракт полей, которые пишет n8n', () => {
   assert.match(questionsV3, /fallback/i);
   assert.match(questionsV3, /ДОБОР|добор/i);
   assert.match(questionsV3, /shortfall/);
+  const questionsV4 = fs.readFileSync(path.join(__dirname, 'gen_questions_v4.md'), 'utf8');
+  const fillDefs = fs.readFileSync(path.join(__dirname, 'fill_term_definitions_v1.md'), 'utf8');
+  assert.match(questionsV4, /ТЕЗИСЫ|тезис/i);
+  assert.match(questionsV4, /8–12|8-12/);
+  assert.match(questionsV4, /УЖЕ_ИСПОЛЬЗОВАНО/);
+  assert.match(questionsV4, /shortfall/);
+  assert.match(fillDefs, /definition/);
   assert.match(miss, /term_id/);
   assert.match(miss, /llm_usage/);
   assert.match(quiz, /need 3-4 topics/);

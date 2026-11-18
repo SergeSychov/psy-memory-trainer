@@ -11,7 +11,9 @@
 | [extract_terms_v2.md](extract_terms_v2.md) | **psy_05** термины + `life_example` |
 | [gen_questions.md](gen_questions.md) | v1 (не трогать) |
 | [gen_questions_v2.md](gen_questions_v2.md) | v2 (не трогать) |
-| [gen_questions_v3.md](gen_questions_v3.md) | **psy_05** MCQ; fallback-термины лекции; добор; частичный успех |
+| [gen_questions_v3.md](gen_questions_v3.md) | v3 (не трогать): fallback-термины лекции |
+| [gen_questions_v4.md](gen_questions_v4.md) | **psy_05** MCQ: тезисы, свои термины, 8–12, anti-dupe |
+| [fill_term_definitions_v1.md](fill_term_definitions_v1.md) | **psy_05** дозаполнение пустых definition перед MCQ |
 | [explain_miss.md](explain_miss.md) | объяснение при пустом пуле |
 | [consolidate_quiz.md](consolidate_quiz.md) | фаза 2 |
 

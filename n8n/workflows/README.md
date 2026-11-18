@@ -79,17 +79,19 @@ JSON-экспорт и `.id` файлы. Деплой: `python3 n8n/scripts/pull
 |---|---|
 | Триггеры | `In — Manual`, `In — Execute` (passthrough; опц. `max_cost_usd_per_lecture`, `monthly_budget_usd` — только вниз) — **не активировать** |
 | Credentials | `psy Supabase (psy_n8n)`, `DeepSeek account` |
-| Промпты | `extract_terms_v2`, `gen_questions_v3`; валидатор + `subtopic_questions.js` встроены в Code при сборке |
+| Промпты | `extract_terms_v2`, `fill_term_definitions_v1`, `gen_questions_v4`; валидатор + `subtopic_questions.js` встроены в Code при сборке |
 | Фрагменты | konspekt ≤ ~5.5k (секция ± сосед; miss-окно по позиции подтемы), transcript ≤ ~7k (хиты ±1; без chunks — нарезка transcript ~1k) |
-| Термины | soft (`parseOk`): пустой extract → course fallback или `no_terms_available`; hard parse → `Run — Terms Proceed` false → Fail Context (retry, keep lecture). Цепочка MCQ: подтема → лекция → курс |
+| Термины | soft (`parseOk`): пустой extract → course gate / `no_terms_available`; hard parse → Fail Context. Перед MCQ: heuristic + LLM fill пустых definition. MCQ только по терминам **своей** подтемы с definition (без clone-fallback) |
 | Merge thin | только при совпавшей `##` и длине primary < 400; score 0 не сливает |
-| Идемпотентность | job `terms:<lecture_id>`; `subtopics` по `(lecture_id, ordinal)`; `glossary_terms` по `(course_id, canonical)`; `questions` по `(subtopic_id, ordinal_in_subtopic) WHERE kind='life_mcq'` |
-| Читает | `psy.jobs`, `psy.lectures`, `psy.lecture_texts`, `psy.chunks`, `psy.glossary_terms`, `psy.cards` (проверка), `psy.llm_usage` |
-| Пишет | `psy.glossary_terms`, `psy.subtopics`, `psy.questions`, `psy.lectures`, `psy.jobs`, `psy.llm_usage` |
+| Идемпотентность | job `terms:<lecture_id>`; `subtopics` по `(lecture_id, ordinal)`; `glossary_terms` по `(course_id, canonical)`; active `questions` по `(subtopic_id, ordinal_in_subtopic) WHERE kind='life_mcq' AND superseded_at IS NULL` |
+| Читает | `psy.jobs`, `psy.lectures`, `psy.lecture_texts`, `psy.chunks`, `psy.glossary_terms`, `psy.cards` (только active life_mcq), `psy.llm_usage` |
+| Пишет | `psy.glossary_terms`, `psy.subtopics`, `psy.questions` (insert/update active; trim → `superseded_at`, без DELETE), `psy.lectures`, `psy.jobs`, `psy.llm_usage` |
 | Backfill | `lectures.status = 'konspekt_ready'` без job `terms:<id>` → queued |
-| Успех | `questions_ready`, job `done`, `payload`: `terms_count`, `subtopics_count`, `questions_count`, `short_questions` (подтемы с `< 10` вопросов и фактическим числом), `llm_calls`, `cost_usd` |
-| Ошибка | общие правила; `cards exist` / `empty_konspekt` / budget → job `failed`, лекция не меняется; 0 вопросов всего → job `failed` (`no_questions_generated`) |
+| Успех | `questions_ready`, job `done`, `payload`: `terms_count`, `subtopics_count`, `questions_count`, `short_questions` (подтемы с `< 8` активных), `llm_calls`, `cost_usd` |
+| Ошибка | общие правила; active `cards exist` / `empty_konspekt` / budget → job `failed`, лекция не меняется; 0 вопросов всего → job `failed` (`no_questions_generated`) |
 
 Термины: определение из другой лекции не перезаписывается (перезапись только для той же лекции или при пустом определении); `aliases` объединяются; `lecture_id` ставится, если был `NULL`; `life_example` следует за принятым определением. Подтемы вне нового списка удаляются только если карточек нет.
 
-Вопросы (цикл `Run — Loop Subtopics`, batch 1): фрагменты конспекта/транскрипта выбираются по терминам подтемы → `Shared — DeepSeek Questions` → валидатор → при `< 10` валидных **один** повтор (`Shared — DeepSeek Questions Retry`: исправление или добор с уже принятыми stem в списке «не повторять») → принять все валидные (частичный успех). Повтор пропускается, если не хватает бюджета. Подтема без терминов с определением пропускается (попадёт в `short_questions` с 0).
+Вопросы (цикл `Run — Loop Subtopics`, batch 1): тезисы фрагмента + свои термины + УЖЕ_ИСПОЛЬЗОВАНО (stem и пары термин–ответ из active вопросов лекции) → `gen_questions_v4` → валидатор (8–12, similarity dedupe) → при нехватке **один** retry → `finalizeQuestions` перемешивает `correct_choice` (seed по stem, доля буквы ≤ 35%) → upsert. Лучше меньше уникальных, чем клоны (`shortfall`). Подтема без своих терминов с definition пропускается (`short_questions`).
+
+**Бюджет (оценка v6):** terms + fill_defs + ~8×(questions±retry). Пиковые цены DeepSeek → ориентир **~$0.06–0.12** на лекцию при 8 подтемах; потолок **$0.30**, цель **≤ $0.10**. Рост vs v5: +1 fill-call (~$0.01–0.02), чуть длиннее user (тезисы/used); экономия — нет clone-fallback и меньше бессмысленных retry.
