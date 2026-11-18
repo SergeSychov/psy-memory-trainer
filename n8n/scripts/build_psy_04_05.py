@@ -37,7 +37,7 @@ DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
 
 WF_VER = {
     "psy_04": "psy_04_konspekt_v1",
-    "psy_05": "psy_05_terms_questions_v6",
+    "psy_05": "psy_05_terms_questions_v7",
 }
 
 # psy_03 lives in n8n already; id only used as sanity check / fallback when .id is missing.
@@ -941,18 +941,29 @@ const constants = {
   est_input_tokens_fill: 12000,
   prompt_versions: {
     terms: 'extract_terms_v2',
-    fill_definitions: 'fill_term_definitions_v1',
-    questions: 'gen_questions_v4',
+    fill_definitions: 'fill_term_definitions_v2',
+    questions: 'gen_questions_v5',
   },
   max_attempts: 3,
   stale_running_hours: 4,
+  // Kick overrides (Execute passthrough): only_subtopic_ordinals, skip_terms_extract
+  only_subtopic_ordinals: null,
+  skip_terms_extract: false,
 };
 // In — Execute may only LOWER these limits (never raise).
 ['max_cost_usd_per_lecture', 'monthly_budget_usd'].forEach((key) => {
   const v = Number(input[key]);
   if (Number.isFinite(v) && v > 0 && v < constants[key]) constants[key] = v;
 });
-return [{ json: { constants }, pairedItem: 0 }];"""
+if (Array.isArray(input.only_subtopic_ordinals) && input.only_subtopic_ordinals.length) {
+  constants.only_subtopic_ordinals = input.only_subtopic_ordinals
+    .map((n) => Number(n))
+    .filter((n) => Number.isInteger(n) && n >= 1);
+}
+if (input.skip_terms_extract === true || input.skip_terms_extract === 'true') {
+  constants.skip_terms_extract = true;
+}
+return [{ json: { constants, kick: input }, pairedItem: 0 }];"""
 
 LOAD_LECTURE_05 = """SELECT
   j.id AS job_id,
@@ -1228,7 +1239,7 @@ LOAD_SPEND_SQL = """SELECT
   ), '[]'::jsonb) AS used_stems,
   COALESCE((
     SELECT jsonb_agg(
-      lower(trim(g.canonical)) || '||' || lower(trim(regexp_replace(
+      lower(trim(COALESCE(g.canonical, q.thesis, ''))) || '||' || lower(trim(regexp_replace(
         CASE q.correct_choice
           WHEN 'A' THEN q.choice_a
           WHEN 'B' THEN q.choice_b
@@ -1238,7 +1249,7 @@ LOAD_SPEND_SQL = """SELECT
       ORDER BY q.created_at, q.id
     )
     FROM psy.questions q
-    JOIN psy.glossary_terms g ON g.id = q.term_id
+    LEFT JOIN psy.glossary_terms g ON g.id = q.term_id
     WHERE q.lecture_id = $4::uuid
       AND q.kind = 'life_mcq'
       AND q.superseded_at IS NULL
@@ -1327,6 +1338,7 @@ const base = {
   loop_run_index: runIndex,
   skip: Boolean(parts.skip),
   skip_reason: parts.skip_reason,
+  thesis_mode: Boolean(parts.thesis_mode),
 };
 
 if (parts.skip) {
@@ -1381,7 +1393,7 @@ SET payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object(
     jsonb_build_object(
       'subtopic_ordinal', $1::int,
       'title', $2::text,
-      'reason', 'no_terms_available'
+      'reason', COALESCE(NULLIF($4::text, ''), 'no_terms_or_theses')
     )
   )
 )
@@ -1392,7 +1404,10 @@ MERGE_THIN_JS = r"""__SUBTOPIC_LIB__
 const item = items[0].json;
 const L = $('Load — Lecture').first().json;
 const C = $('Run — Init Constants').first().json.constants;
-const merged = mergeThinSubtopics(
+// skip_terms_extract: keep DB subtopic list intact (do not fold ordinals).
+const merged = C.skip_terms_extract
+  ? { subtopics: item.subtopics || [], terms: item.terms || [], merges: [] }
+  : mergeThinSubtopics(
   item.subtopics || [],
   item.terms || [],
   L.konspekt_md || '',
@@ -1406,16 +1421,22 @@ const det = fillDefinitionsFromText(
   L.konspekt_md || '',
   L.transcript || '',
 );
-const emptyDefs = det.terms.filter(
-  (t) => !(t.definition != null && String(t.definition).trim()),
-);
+// Drop broken definitions so fill LLM can rewrite them.
+const cleaned = det.terms.map((t) => {
+  if (needsDefinitionRefill(t.definition, t.canonical)) {
+    return { ...t, definition: null, life_example: null };
+  }
+  return t;
+});
+const emptyDefs = cleaned.filter((t) => needsDefinitionRefill(t.definition, t.canonical));
 return [{
   json: {
     ...item,
     subtopics: merged.subtopics,
-    terms: det.terms,
+    terms: cleaned,
     thin_merges: merged.merges,
     definitions_filled_heuristic: det.filled,
+    definitions_rejected_heuristic: det.rejected || [],
     empty_definitions: emptyDefs.map((t) => ({
       canonical: t.canonical,
       aliases: t.aliases || [],
@@ -1464,12 +1485,14 @@ if (!p.content.trim()) {
     };
   } else {
     validation = validateQuestionsPayload(pj.value, {
-      termCanonicals: b.term_canonicals,
+      termCanonicals: b.term_canonicals || [],
       existingStems: b.existing_stems || b.used_stems || [],
       existingTermAnswers: b.used_term_answers || [],
       minQuestions: C.questions_min || 8,
       maxQuestions: C.questions_max || 12,
       similarityThreshold: C.stem_similarity_threshold || 0.72,
+      allowThesis: true,
+      thesisOnly: Boolean(b.thesis_mode),
     });
   }
 }
@@ -1626,15 +1649,16 @@ UPSERT_QUESTIONS_SQL = """WITH params AS (
   SELECT q.*
   FROM params p
   CROSS JOIN LATERAL jsonb_to_recordset(p.questions) AS q(
-    ordinal int, term_canonical text, stem text,
+    ordinal int, source_kind text, term_canonical text, thesis text, stem text,
     choice_a text, choice_b text, choice_c text, choice_d text,
     correct_choice text, explanation text, choice_explanations jsonb
   )
 ), no_cards AS (
+  -- Refuse rewrite only when THIS subtopic already has cards (lecture-wide block removed).
   SELECT NOT EXISTS (
     SELECT 1 FROM psy.cards c
     JOIN psy.questions qq ON qq.id = c.question_id
-    WHERE qq.lecture_id = (SELECT lecture_id FROM params)
+    WHERE qq.subtopic_id = (SELECT subtopic_id FROM params)
       AND qq.kind = 'life_mcq'
       AND qq.superseded_at IS NULL
   ) AS ok
@@ -1647,16 +1671,29 @@ UPSERT_QUESTIONS_SQL = """WITH params AS (
     lecture_id, subtopic_id, term_id, stem,
     choice_a, choice_b, choice_c, choice_d,
     correct_choice, explanation, choice_explanations, kind, ordinal_in_subtopic,
-    generation, superseded_at
+    generation, superseded_at, source_kind, thesis
   )
   SELECT p.lecture_id, p.subtopic_id, g.id, s.stem,
          s.choice_a, s.choice_b, s.choice_c, s.choice_d,
          s.correct_choice, s.explanation, s.choice_explanations, 'life_mcq', s.ordinal,
-         (SELECT n FROM gen), NULL
+         (SELECT n FROM gen), NULL,
+         COALESCE(NULLIF(s.source_kind, ''), CASE WHEN s.term_canonical IS NULL OR btrim(s.term_canonical)='' THEN 'thesis' ELSE 'term' END),
+         NULLIF(btrim(s.thesis), '')
   FROM params p
   CROSS JOIN src s
-  JOIN psy.glossary_terms g ON g.course_id = p.course_id AND g.canonical = s.term_canonical
+  LEFT JOIN psy.glossary_terms g
+    ON g.course_id = p.course_id
+   AND s.term_canonical IS NOT NULL
+   AND btrim(s.term_canonical) <> ''
+   AND g.canonical = s.term_canonical
   WHERE (SELECT ok FROM no_cards)
+    AND (
+      (COALESCE(s.source_kind, 'term') = 'term' AND g.id IS NOT NULL)
+      OR (
+        COALESCE(s.source_kind, 'thesis') = 'thesis'
+        AND NULLIF(btrim(s.thesis), '') IS NOT NULL
+      )
+    )
   ON CONFLICT (subtopic_id, ordinal_in_subtopic) WHERE (kind = 'life_mcq' AND superseded_at IS NULL)
   DO UPDATE SET
     term_id = EXCLUDED.term_id,
@@ -1668,7 +1705,9 @@ UPSERT_QUESTIONS_SQL = """WITH params AS (
     correct_choice = EXCLUDED.correct_choice,
     explanation = EXCLUDED.explanation,
     choice_explanations = EXCLUDED.choice_explanations,
-    generation = EXCLUDED.generation
+    generation = EXCLUDED.generation,
+    source_kind = EXCLUDED.source_kind,
+    thesis = EXCLUDED.thesis
   RETURNING id
 ), trim_old AS (
   UPDATE psy.questions qd
@@ -1775,16 +1814,34 @@ def build_psy_05() -> tuple[str, list, dict]:
     nodes: list = []
     conn: dict = {}
     sys_terms = js_literal(load_system_prompt("extract_terms_v2.md"))
-    sys_q = js_literal(load_system_prompt("gen_questions_v4.md"))
-    sys_fill = js_literal(load_system_prompt("fill_term_definitions_v1.md"))
+    sys_q = js_literal(load_system_prompt("gen_questions_v5.md"))
+    sys_fill = js_literal(load_system_prompt("fill_term_definitions_v2.md"))
     validator = load_validator_js()
     subtopic_lib = load_subtopic_questions_js()
     finalize_embedded = sub_code(FINALIZE_Q_JS, VALIDATOR=validator)
 
     nodes.append(sticky("NOTE — In", "## In\nManual + Execute (passthrough). Lower-only overrides: `max_cost_usd_per_lecture`, `monthly_budget_usd`. Inactive.", -40, 40, 360, 140))
     nodes.append(sticky("NOTE — Run/Load", "## Run / Load\nBackfill `terms` jobs for `konspekt_ready` → claim `terms`. Refuse when **active** cards exist (superseded life_mcq ignored).", 380, 40, 460, 140))
-    nodes.append(sticky("NOTE — LLM", "## LLM\n`extract_terms_v2` → fill empty defs (`fill_term_definitions_v1`) → `gen_questions_v4` per subtopic (theses, own terms only, anti-dupe). Shuffle correct_choice in code.", 1000, 40, 560, 180))
-    nodes.append(sticky("NOTE — DB/Fin", "## DB / Fin\nUpsert active life_mcq; excess ordinals → `superseded_at` (no DELETE). short_questions = n < 8. Job done + `questions_ready`.", 3100, 40, 480, 160))
+    nodes.append(sticky("NOTE — LLM", "## LLM\n`extract_terms_v2` (or skip+load) → fill v2 → `gen_questions_v5` (term|thesis). Kick: `only_subtopic_ordinals`, `skip_terms_extract`.", 1000, 40, 560, 180))
+    nodes.append(sticky("NOTE — DB/Fin", "## DB / Fin\nUpsert active life_mcq (term_id nullable for thesis); excess → `superseded_at`. short_questions = n < 8.", 3100, 40, 480, 160))
+
+    LOAD_EXISTING_05 = """SELECT
+  $1::uuid AS lecture_id,
+  COALESCE((
+    SELECT jsonb_agg(jsonb_build_object('ordinal', st.ordinal, 'title', st.title) ORDER BY st.ordinal)
+    FROM psy.subtopics st WHERE st.lecture_id = $1::uuid
+  ), '[]'::jsonb) AS subtopics,
+  COALESCE((
+    SELECT jsonb_agg(jsonb_build_object(
+      'canonical', g.canonical,
+      'aliases', to_jsonb(COALESCE(g.aliases, ARRAY[]::text[])),
+      'definition', g.definition,
+      'life_example', g.life_example,
+      'subtopic_ordinal', 1
+    ) ORDER BY g.canonical)
+    FROM psy.glossary_terms g
+    WHERE g.lecture_id = $1::uuid
+  ), '[]'::jsonb) AS terms"""
 
     n_manual = manual_trigger(0, 300)
     n_exec = exec_trigger(0, 480)
@@ -1819,6 +1876,57 @@ def build_psy_05() -> tuple[str, list, dict]:
         1540,
         300,
         "notEmpty",
+    )
+    n_skip_terms = iff(
+        "Run — Skip Terms Extract",
+        "={{ String($('Run — Init Constants').first().json.constants.skip_terms_extract) }}",
+        "true",
+        1650,
+        300,
+        "equals",
+    )
+    n_load_existing = pg(
+        "Load — Existing Subtopics Terms",
+        LOAD_EXISTING_05,
+        1760,
+        400,
+        """={{ [
+  $('Load — Lecture').first().json.lecture_id
+] }}""",
+    )
+    n_existing_ready = code(
+        "LLM — Existing Ready",
+        r"""const L = $('Load — Lecture').first().json;
+const row = items[0].json;
+let terms = row.terms || [];
+if (typeof terms === 'string') { try { terms = JSON.parse(terms); } catch (e) { terms = []; } }
+let subtopics = row.subtopics || [];
+if (typeof subtopics === 'string') { try { subtopics = JSON.parse(subtopics); } catch (e) { subtopics = []; } }
+// Existing glossary rows have no subtopic_ordinal in DB — keep placeholder;
+// thesis MCQ for empty-term subtopics does not need own terms.
+terms = (Array.isArray(terms) ? terms : []).map((t) => ({
+  canonical: t.canonical,
+  aliases: t.aliases || [],
+  definition: t.definition,
+  life_example: t.life_example,
+  subtopic_ordinal: Number(t.subtopic_ordinal) || 1,
+}));
+return [{
+  json: {
+    ok: true,
+    proceed: true,
+    subtopics: Array.isArray(subtopics) ? subtopics : [],
+    terms,
+    lecture_terms_empty: !terms.length,
+    course_fallback: false,
+    hard_parse_error: false,
+    gate_reason: 'skip_terms_extract',
+    transcript_truncated: false,
+  },
+  pairedItem: 0,
+}];""",
+        1980,
+        400,
     )
     n_build_terms = code(
         "LLM — Build Terms Request",
@@ -2044,7 +2152,22 @@ return [{ json: { ...M, definitions_filled_llm: [], fill_skipped: true }, paired
   JSON.stringify($('LLM — Merge Thin Subtopics').first().json.subtopics)
 ] }}""",
     )
-    n_loop = splitter("Run — Loop Subtopics", 3840, 140)
+    n_filter_subs = code(
+        "Run — Filter Subtopics",
+        r"""const C = $('Run — Init Constants').first().json.constants;
+const only = C.only_subtopic_ordinals;
+const items = $('DB — Upsert Subtopics').all().map((i) => i.json);
+const list = (!only || !only.length)
+  ? items
+  : items.filter((row) => only.includes(Number(row.ordinal)));
+if (!list.length) {
+  return [{ json: { skip_all: true, ordinal: 0, title: '', subtopic_id: null }, pairedItem: 0 }];
+}
+return list.map((row, idx) => ({ json: row, pairedItem: idx }));""",
+        4580,
+        140,
+    )
+    n_loop = splitter("Run — Loop Subtopics", 4700, 140)
     n_spend = pg(
         "DB — Load Spend",
         LOAD_SPEND_SQL,
@@ -2079,7 +2202,8 @@ return [{ json: { ...M, definitions_filled_llm: [], fill_skipped: true }, paired
         """={{ [
   Number($json.ordinal),
   $json.title,
-  $json.job_id
+  $json.job_id,
+  $json.skip_reason || 'no_terms_or_theses'
 ] }}""",
     )
     n_budget_q = iff("LLM — Budget OK Questions", "={{ String($json.budget_exceeded) }}", "false", 4620, 140, "equals")
@@ -2161,11 +2285,12 @@ return [{ json: { ...M, definitions_filled_llm: [], fill_skipped: true }, paired
 
     nodes.extend([
         n_manual, n_exec, n_init, n_backfill, n_claim, n_has, n_lecture, n_no_cards, n_has_konspekt,
+        n_skip_terms, n_load_existing, n_existing_ready,
         n_build_terms, n_budget_terms, n_http_terms, n_parse_terms, n_log_terms, n_terms_ready, n_terms_ok,
         n_merge_thin, n_needs_fill, n_build_fill, n_budget_fill, n_http_fill, n_parse_fill, n_log_fill,
-        n_after_fill, n_skip_fill_pass, n_up_terms, n_up_subs, n_loop, n_spend, n_build_q, n_should_gen,
-        n_note_no_terms, n_budget_q, n_http_q, n_parse_q, n_log_q, n_decide, n_needs_retry, n_http_retry,
-        n_parse_retry, n_log_retry, n_merge, n_up_q, n_finish, n_fail_ctx, n_fail,
+        n_after_fill, n_skip_fill_pass, n_up_terms, n_up_subs, n_filter_subs, n_loop, n_spend, n_build_q,
+        n_should_gen, n_note_no_terms, n_budget_q, n_http_q, n_parse_q, n_log_q, n_decide, n_needs_retry,
+        n_http_retry, n_parse_retry, n_log_retry, n_merge, n_up_q, n_finish, n_fail_ctx, n_fail,
     ])
 
     link(conn, "In — Manual", "Run — Init Constants")
@@ -2177,8 +2302,13 @@ return [{ json: { ...M, definitions_filled_llm: [], fill_skipped: true }, paired
     link(conn, "Load — Lecture", "Load — No Cards")
     link(conn, "Load — No Cards", "Load — Has Konspekt", 0)
     link(conn, "Load — No Cards", "Fin — Fail Context", 1)
-    link(conn, "Load — Has Konspekt", "LLM — Build Terms Request", 0)
+    link(conn, "Load — Has Konspekt", "Run — Skip Terms Extract", 0)
     link(conn, "Load — Has Konspekt", "Fin — Fail Context", 1)
+    # skip_terms_extract=true → load existing; false → extract_terms LLM
+    link(conn, "Run — Skip Terms Extract", "Load — Existing Subtopics Terms", 0)
+    link(conn, "Run — Skip Terms Extract", "LLM — Build Terms Request", 1)
+    link(conn, "Load — Existing Subtopics Terms", "LLM — Existing Ready")
+    link(conn, "LLM — Existing Ready", "LLM — Merge Thin Subtopics")
     link(conn, "LLM — Build Terms Request", "LLM — Budget OK Terms")
     link(conn, "LLM — Budget OK Terms", "Shared — DeepSeek Terms", 0)
     link(conn, "LLM — Budget OK Terms", "Fin — Fail Context", 1)
@@ -2203,7 +2333,8 @@ return [{ json: { ...M, definitions_filled_llm: [], fill_skipped: true }, paired
     link(conn, "LLM — After Fill Defs", "DB — Upsert Terms")
     link(conn, "LLM — Skip Fill Pass", "DB — Upsert Terms")
     link(conn, "DB — Upsert Terms", "DB — Upsert Subtopics")
-    link(conn, "DB — Upsert Subtopics", "Run — Loop Subtopics")
+    link(conn, "DB — Upsert Subtopics", "Run — Filter Subtopics")
+    link(conn, "Run — Filter Subtopics", "Run — Loop Subtopics")
     link(conn, "Run — Loop Subtopics", "DB — Finish Job", 0)
     link(conn, "Run — Loop Subtopics", "DB — Load Spend", 1)
     link(conn, "DB — Load Spend", "LLM — Build Questions Request")

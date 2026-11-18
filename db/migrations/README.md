@@ -8,7 +8,8 @@ SQL-миграции Postgres/Supabase (pgvector). В kickoff каталог н�
 |---|---|
 | [`0001_init.sql`](0001_init.sql) | схема **`psy`**, на проде |
 | [`0002_llm_versions_and_term_examples.sql`](0002_llm_versions_and_term_examples.sql) | `llm_usage` версии/cache/job/step, `glossary_terms.life_example`, `questions.ordinal_in_subtopic` |
-| [`0003_questions_superseded.sql`](0003_questions_superseded.sql) | `questions.superseded_at` + `generation`; unique только для active life_mcq — **не применять без «да»** |
+| [`0003_questions_superseded.sql`](0003_questions_superseded.sql) | `questions.superseded_at` + `generation`; unique только для active life_mcq |
+| [`0004_questions_thesis_nullable_term.sql`](0004_questions_thesis_nullable_term.sql) | `questions.term_id` nullable + `source_kind`/`thesis`; `cards.term_id` nullable — **не применять без «да»** |
 
 `CREATE EXTENSION` нет: `pgcrypto` / `uuid-ossp` / `vector` уже в `extensions`. Колонки embedding нет.
 

@@ -421,6 +421,8 @@ INSERT INTO psy.cards (user_id, question_id, term_id, due, stability, difficulty
 SELECT u.id, q.id, q.term_id, now(), 1, 5, 0, 0, 0, 0, 0
 FROM psy.users u, psy.questions q
 WHERE u.telegram_user_id=-100002 AND q.lecture_id='{lecture_id}'::uuid
+  AND q.term_id IS NOT NULL
+  AND COALESCE(q.superseded_at, NULL) IS NULL
 ORDER BY q.created_at LIMIT 1;
 UPDATE psy.jobs SET status='queued', attempts=0, error=NULL, started_at=NULL, finished_at=NULL
  WHERE lecture_id='{lecture_id}'::uuid AND step='terms';
