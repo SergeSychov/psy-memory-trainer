@@ -1117,15 +1117,16 @@ if (!data || typeof data !== 'object' || !Array.isArray(data.subtopics) || !Arra
 
 // empty_subtopics is soft: synthesize before binding terms (avoids TypeError on
 // subs[0] when terms exist). Course fallback / no_terms stay in Terms Ready.
-const norm = normalizeTermsExtract(data, { lectureTitle: L.title || '' });
+// Do not name this `norm`: SUBTOPIC_LIB already declares function norm().
+const extracted = normalizeTermsExtract(data, { lectureTitle: L.title || '' });
 result.ok = true;
-result.subtopics = norm.subtopics;
-result.terms = norm.terms;
-result.lecture_terms_empty = norm.lecture_terms_empty;
-if (norm.synthesizedSubtopic) {
+result.subtopics = extracted.subtopics;
+result.terms = extracted.terms;
+result.lecture_terms_empty = extracted.lecture_terms_empty;
+if (extracted.synthesizedSubtopic) {
   result.error_message = 'terms: empty_subtopics';
 }
-if (!norm.terms.length) {
+if (!extracted.terms.length) {
   result.error_message = result.error_message || 'terms: empty_terms';
 }
 return [{ json: result, pairedItem: 0 }];"""
