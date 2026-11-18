@@ -37,7 +37,7 @@ DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
 
 WF_VER = {
     "psy_04": "psy_04_konspekt_v1",
-    "psy_05": "psy_05_terms_questions_v5",
+    "psy_05": "psy_05_terms_questions_v6",
 }
 
 # psy_03 lives in n8n already; id only used as sanity check / fallback when .id is missing.
@@ -927,12 +927,23 @@ const constants = {
   est_output_tokens_questions: 6000,
   est_input_tokens_questions: 8000,
   est_subtopics_for_budget: 8,
+  // Contract v6: 8–12 unique per subtopic; fewer OK with shortfall (no clones).
+  questions_min: 8,
   questions_target: 10,
-  max_questions_per_subtopic: 14,
+  questions_max: 12,
+  max_questions_per_subtopic: 12,
+  max_letter_share: 0.35,
+  stem_similarity_threshold: 0.72,
   questions_konspekt_max_chars: 5500,
   questions_transcript_max_chars: 7000,
   questions_thin_min_chars: 400,
-  prompt_versions: { terms: 'extract_terms_v2', questions: 'gen_questions_v3' },
+  est_output_tokens_fill: 2500,
+  est_input_tokens_fill: 12000,
+  prompt_versions: {
+    terms: 'extract_terms_v2',
+    fill_definitions: 'fill_term_definitions_v1',
+    questions: 'gen_questions_v4',
+  },
   max_attempts: 3,
   stale_running_hours: 4,
 };
@@ -977,6 +988,8 @@ LOAD_LECTURE_05 = """SELECT
     SELECT count(*) FROM psy.cards c
     JOIN psy.questions q ON q.id = c.question_id
     WHERE q.lecture_id = l.id
+      AND q.kind = 'life_mcq'
+      AND q.superseded_at IS NULL
   )::int AS cards_count,
   COALESCE((
     SELECT sum(u.cost_usd) FROM psy.llm_usage u
@@ -1205,12 +1218,52 @@ LOAD_SPEND_SQL = """SELECT
   ), 0)::float8 AS spent_month_usd,
   COALESCE((
     SELECT sum(u.cost_usd) FROM psy.llm_usage u WHERE u.lecture_id = $4::uuid
-  ), 0)::float8 AS spent_lecture_usd"""
+  ), 0)::float8 AS spent_lecture_usd,
+  COALESCE((
+    SELECT jsonb_agg(q.stem ORDER BY q.created_at, q.id)
+    FROM psy.questions q
+    WHERE q.lecture_id = $4::uuid
+      AND q.kind = 'life_mcq'
+      AND q.superseded_at IS NULL
+  ), '[]'::jsonb) AS used_stems,
+  COALESCE((
+    SELECT jsonb_agg(
+      lower(trim(g.canonical)) || '||' || lower(trim(regexp_replace(
+        CASE q.correct_choice
+          WHEN 'A' THEN q.choice_a
+          WHEN 'B' THEN q.choice_b
+          WHEN 'C' THEN q.choice_c
+          ELSE q.choice_d
+        END, '\\s+', ' ', 'g')))
+      ORDER BY q.created_at, q.id
+    )
+    FROM psy.questions q
+    JOIN psy.glossary_terms g ON g.id = q.term_id
+    WHERE q.lecture_id = $4::uuid
+      AND q.kind = 'life_mcq'
+      AND q.superseded_at IS NULL
+  ), '[]'::jsonb) AS used_term_answers,
+  COALESCE((
+    SELECT jsonb_object_agg(letter, cnt)
+    FROM (
+      SELECT q.correct_choice AS letter, count(*)::int AS cnt
+      FROM psy.questions q
+      WHERE q.lecture_id = $4::uuid
+        AND q.kind = 'life_mcq'
+        AND q.superseded_at IS NULL
+      GROUP BY q.correct_choice
+    ) s
+  ), '{}'::jsonb) AS letter_counts"""
 
 BUILD_QUESTIONS_JS = r"""__SUBTOPIC_LIB__
 const C = $('Run — Init Constants').first().json.constants;
 const L = $('Load — Lecture').first().json;
-const T = $('LLM — Merge Thin Subtopics').item.json;
+const mergeThin = $('LLM — Merge Thin Subtopics').item.json;
+const sd = $getWorkflowStaticData('global');
+const T = {
+  ...mergeThin,
+  terms: (sd.filledTerms && sd.filledTerms.length) ? sd.filledTerms : (mergeThin.terms || []),
+};
 const spend = items[0].json;
 const loopSub = $('Run — Loop Subtopics').item.json;
 const runIndex = typeof $runIndex === 'number' ? $runIndex : 0;
@@ -1226,6 +1279,16 @@ const SYSTEM = __SYS_Q__;
 const cpt = C.chars_per_token || 2;
 const est = (s) => Math.ceil(String(s || '').length / cpt);
 
+const usedStems = Array.isArray(spend.used_stems) ? spend.used_stems : [];
+const usedTermAnswers = Array.isArray(spend.used_term_answers) ? spend.used_term_answers : [];
+const letterCountsRaw = spend.letter_counts && typeof spend.letter_counts === 'object'
+  ? spend.letter_counts
+  : {};
+const letterCounts = { A: 0, B: 0, C: 0, D: 0 };
+for (const Ltr of ['A', 'B', 'C', 'D']) {
+  letterCounts[Ltr] = Number(letterCountsRaw[Ltr]) || 0;
+}
+
 const parts = buildQuestionsRequestParts({
   subtopic: { ordinal: sub.ordinal, title: sub.title },
   allTerms: T.terms || [],
@@ -1236,6 +1299,9 @@ const parts = buildQuestionsRequestParts({
   constants: C,
   subtopicIndex: Math.max(0, subList.findIndex((s) => Number(s.ordinal) === sub.ordinal)),
   subtopicCount: Math.max(subList.length, 1),
+  usedPlots: usedStems,
+  usedTermAnswers,
+  ownOnly: true,
 });
 
 const base = {
@@ -1251,7 +1317,11 @@ const base = {
   term_canonicals: parts.term_canonicals,
   terms_fallback: parts.terms_fallback,
   terms_source: parts.terms_source,
-  existing_stems: [],
+  theses: parts.theses || [],
+  existing_stems: usedStems,
+  used_stems: usedStems,
+  used_term_answers: usedTermAnswers,
+  letter_counts: letterCounts,
   step: 'questions',
   prompt_version: C.prompt_versions.questions,
   loop_run_index: runIndex,
@@ -1331,12 +1401,26 @@ const merged = mergeThinSubtopics(
     konspektMaxChars: C.questions_konspekt_max_chars,
   },
 );
+const det = fillDefinitionsFromText(
+  merged.terms,
+  L.konspekt_md || '',
+  L.transcript || '',
+);
+const emptyDefs = det.terms.filter(
+  (t) => !(t.definition != null && String(t.definition).trim()),
+);
 return [{
   json: {
     ...item,
     subtopics: merged.subtopics,
-    terms: merged.terms,
+    terms: det.terms,
     thin_merges: merged.merges,
+    definitions_filled_heuristic: det.filled,
+    empty_definitions: emptyDefs.map((t) => ({
+      canonical: t.canonical,
+      aliases: t.aliases || [],
+    })),
+    needs_fill: emptyDefs.length > 0,
   },
   pairedItem: 0,
 }];"""
@@ -1381,7 +1465,11 @@ if (!p.content.trim()) {
   } else {
     validation = validateQuestionsPayload(pj.value, {
       termCanonicals: b.term_canonicals,
-      existingStems: b.existing_stems || [],
+      existingStems: b.existing_stems || b.used_stems || [],
+      existingTermAnswers: b.used_term_answers || [],
+      minQuestions: C.questions_min || 8,
+      maxQuestions: C.questions_max || 12,
+      similarityThreshold: C.stem_similarity_threshold || 0.72,
     });
   }
 }
@@ -1397,29 +1485,31 @@ return [{
   pairedItem: 0,
 }];"""
 
-FINALIZE_Q_JS = r"""function finalizeQuestions(list, cap) {
-  return list.slice(0, cap).map((q, i) => ({
-    ordinal: i + 1,
-    term_canonical: q.term_canonical,
-    stem: q.stem,
-    choice_a: q.choice_a,
-    choice_b: q.choice_b,
-    choice_c: q.choice_c,
-    choice_d: q.choice_d,
-    correct_choice: q.correct_choice,
-    explanation: q.explanation,
-    choice_explanations: { A: q.explanation_a, B: q.explanation_b, C: q.explanation_c, D: q.explanation_d },
-  }));
-}"""
+FINALIZE_Q_JS = r"""__VALIDATOR__
+function packQuestions(list, cap, opts) {
+  const fin = finalizeQuestions(list, cap, opts || {});
+  return fin;
+}
+"""
 
 DECIDE_Q_JS = r"""const C = $('Run — Init Constants').first().json.constants;
 const b = $('LLM — Build Questions Request').item.json;
 const p = $('LLM — Parse Questions').item.json;
 __FINALIZE__
-const target = C.questions_target;
+const minQ = C.questions_min || 8;
+const target = C.questions_target || 10;
+const maxQ = C.max_questions_per_subtopic || C.questions_max || 12;
 const valid = p.valid_questions || [];
-const soft = new Set(['lt_10_questions', 'shortfall_true']);
+const soft = new Set(['lt_min_questions', 'lt_10_questions', 'shortfall_true', 'gt_max_questions']);
 const errs = (p.errors || []).filter((e) => !soft.has(e));
+const finOpts = {
+  existingStems: b.used_stems || [],
+  existingTermAnswers: b.used_term_answers || [],
+  letterCounts: b.letter_counts || {},
+  maxLetterShare: C.max_letter_share || 0.35,
+  similarityThreshold: C.stem_similarity_threshold || 0.72,
+  seedPrefix: String(b.subtopic_id || b.ordinal || ''),
+};
 const base = {
   ...b,
   lecture_id: b.lecture_id,
@@ -1438,19 +1528,30 @@ const base = {
   loop_run_index: b.loop_run_index,
 };
 if (valid.length >= target) {
-  return [{ json: { ...base, needs_retry: false, questions_json: JSON.stringify(finalizeQuestions(valid, C.max_questions_per_subtopic)), question_count: Math.min(valid.length, C.max_questions_per_subtopic) }, pairedItem: 0 }];
+  const fin = packQuestions(valid, maxQ, finOpts);
+  return [{ json: {
+    ...base,
+    needs_retry: false,
+    questions_json: JSON.stringify(fin.questions),
+    question_count: fin.questions.length,
+    case_action_share: fin.case_action_share,
+    dropped_dupes: (fin.dropped || []).length,
+  }, pairedItem: 0 }];
 }
 
 // one retry: fix (nothing valid) or top-up (some valid); then accept whatever is valid
-const need = target - valid.length;
+const need = Math.max(minQ - valid.length, 1);
 let extra = '';
 if (errs.length) extra += '\n\nОШИБКИ_ВАЛИДАЦИИ\n' + errs.slice(0, 15).map((e) => '- ' + e).join('\n');
 if (valid.length) {
-  extra += '\n\nДОБОР\nУже есть ' + valid.length + ' валидных вопросов. Нужно ещё не меньше ' + need
-    + '. Верни в questions только новые вопросы и не повторяй stem из списка:\n'
+  extra += '\n\nДОБОР\nУже есть ' + valid.length + ' валидных уникальных вопросов. Нужно ещё около '
+    + need + ' (цель ' + minQ + '–' + maxQ + ', без клонов). Верни в questions только новые и не повторяй сюжеты:\n'
     + valid.map((q) => '- ' + q.stem).join('\n');
+  if ((b.used_stems || []).length) {
+    extra += '\nТакже не повторяй УЖЕ_ИСПОЛЬЗОВАНО из других подтем (' + b.used_stems.length + ' шт.).';
+  }
 } else {
-  extra += '\n\nДОБОР\nНужно не меньше ' + target + ' вопросов. Верни полный исправленный JSON.';
+  extra += '\n\nДОБОР\nНужно ' + minQ + '–' + maxQ + ' уникальных вопросов по тезисам этой подтемы. Верни полный исправленный JSON без клонов.';
 }
 const msgs = b.request_body.messages;
 const retryBody = {
@@ -1465,13 +1566,21 @@ const spentMonth = b.spent_month_usd + p.cost_exact;
 const budgetOk = spentLecture + projected <= C.max_cost_usd_per_lecture
   && spentMonth + projected <= C.monthly_budget_usd * C.budget_stop_ratio;
 if (!budgetOk) {
-  return [{ json: { ...base, needs_retry: false, retry_skipped: 'budget', questions_json: JSON.stringify(finalizeQuestions(valid, C.max_questions_per_subtopic)), question_count: valid.length }, pairedItem: 0 }];
+  const fin = packQuestions(valid, maxQ, finOpts);
+  return [{ json: {
+    ...base,
+    needs_retry: false,
+    retry_skipped: 'budget',
+    questions_json: JSON.stringify(fin.questions),
+    question_count: fin.questions.length,
+    case_action_share: fin.case_action_share,
+  }, pairedItem: 0 }];
 }
 return [{
   json: {
     ...base,
     needs_retry: true,
-    existing_stems: valid.map((q) => q.stem),
+    existing_stems: (b.used_stems || []).concat(valid.map((q) => q.stem)),
     first_valid: valid,
     first_errors: errs.slice(0, 15),
     request_body: retryBody,
@@ -1483,8 +1592,16 @@ MERGE_RETRY_JS = r"""const C = $('Run — Init Constants').first().json.constant
 const d = $('LLM — Decide Questions').item.json;
 const r = $('LLM — Parse Questions Retry').item.json;
 __FINALIZE__
+const maxQ = C.max_questions_per_subtopic || C.questions_max || 12;
 const merged = (d.first_valid || []).concat(r.valid_questions || []);
-const finalList = finalizeQuestions(merged, C.max_questions_per_subtopic);
+const fin = packQuestions(merged, maxQ, {
+  existingStems: d.used_stems || [],
+  existingTermAnswers: d.used_term_answers || [],
+  letterCounts: d.letter_counts || {},
+  maxLetterShare: C.max_letter_share || 0.35,
+  similarityThreshold: C.stem_similarity_threshold || 0.72,
+  seedPrefix: String(d.subtopic_id || d.ordinal || ''),
+});
 return [{
   json: {
     ...d,
@@ -1495,8 +1612,10 @@ return [{
     ordinal: d.ordinal,
     title: d.title,
     retried: true,
-    question_count: finalList.length,
-    questions_json: JSON.stringify(finalList),
+    question_count: fin.questions.length,
+    questions_json: JSON.stringify(fin.questions),
+    case_action_share: fin.case_action_share,
+    dropped_dupes: (fin.dropped || []).length,
   },
   pairedItem: 0,
 }];"""
@@ -1516,21 +1635,29 @@ UPSERT_QUESTIONS_SQL = """WITH params AS (
     SELECT 1 FROM psy.cards c
     JOIN psy.questions qq ON qq.id = c.question_id
     WHERE qq.lecture_id = (SELECT lecture_id FROM params)
+      AND qq.kind = 'life_mcq'
+      AND qq.superseded_at IS NULL
   ) AS ok
+), gen AS (
+  SELECT COALESCE(MAX(q.generation), 0) + 1 AS n
+  FROM psy.questions q
+  WHERE q.lecture_id = (SELECT lecture_id FROM params)
 ), up AS (
   INSERT INTO psy.questions (
     lecture_id, subtopic_id, term_id, stem,
     choice_a, choice_b, choice_c, choice_d,
-    correct_choice, explanation, choice_explanations, kind, ordinal_in_subtopic
+    correct_choice, explanation, choice_explanations, kind, ordinal_in_subtopic,
+    generation, superseded_at
   )
   SELECT p.lecture_id, p.subtopic_id, g.id, s.stem,
          s.choice_a, s.choice_b, s.choice_c, s.choice_d,
-         s.correct_choice, s.explanation, s.choice_explanations, 'life_mcq', s.ordinal
+         s.correct_choice, s.explanation, s.choice_explanations, 'life_mcq', s.ordinal,
+         (SELECT n FROM gen), NULL
   FROM params p
   CROSS JOIN src s
   JOIN psy.glossary_terms g ON g.course_id = p.course_id AND g.canonical = s.term_canonical
   WHERE (SELECT ok FROM no_cards)
-  ON CONFLICT (subtopic_id, ordinal_in_subtopic) WHERE (kind = 'life_mcq')
+  ON CONFLICT (subtopic_id, ordinal_in_subtopic) WHERE (kind = 'life_mcq' AND superseded_at IS NULL)
   DO UPDATE SET
     term_id = EXCLUDED.term_id,
     stem = EXCLUDED.stem,
@@ -1540,13 +1667,16 @@ UPSERT_QUESTIONS_SQL = """WITH params AS (
     choice_d = EXCLUDED.choice_d,
     correct_choice = EXCLUDED.correct_choice,
     explanation = EXCLUDED.explanation,
-    choice_explanations = EXCLUDED.choice_explanations
+    choice_explanations = EXCLUDED.choice_explanations,
+    generation = EXCLUDED.generation
   RETURNING id
-), del AS (
-  DELETE FROM psy.questions qd
-  USING params p
+), trim_old AS (
+  UPDATE psy.questions qd
+  SET superseded_at = now()
+  FROM params p
   WHERE qd.subtopic_id = p.subtopic_id
     AND qd.kind = 'life_mcq'
+    AND qd.superseded_at IS NULL
     AND (SELECT count(*) FROM src) > 0
     AND qd.ordinal_in_subtopic > (SELECT max(ordinal) FROM src)
     AND (SELECT ok FROM no_cards)
@@ -1554,7 +1684,7 @@ UPSERT_QUESTIONS_SQL = """WITH params AS (
 )
 SELECT
   (SELECT count(*) FROM up)::int AS written,
-  (SELECT count(*) FROM del)::int AS deleted,
+  (SELECT count(*) FROM trim_old)::int AS superseded_trim,
   (SELECT ok FROM no_cards) AS no_cards"""
 
 FINISH_JOB_SQL = """WITH params AS (
@@ -1563,7 +1693,9 @@ FINISH_JOB_SQL = """WITH params AS (
 ), counts AS (
   SELECT st.ordinal, st.title, count(q.id)::int AS n
   FROM psy.subtopics st
-  LEFT JOIN psy.questions q ON q.subtopic_id = st.id AND q.kind = 'life_mcq'
+  LEFT JOIN psy.questions q ON q.subtopic_id = st.id
+    AND q.kind = 'life_mcq'
+    AND q.superseded_at IS NULL
   WHERE st.lecture_id = (SELECT lecture_id FROM params)
   GROUP BY st.id, st.ordinal, st.title
 ), agg AS (
@@ -1572,7 +1704,7 @@ FINISH_JOB_SQL = """WITH params AS (
     count(*)::int AS subtopics,
     COALESCE(
       jsonb_agg(jsonb_build_object('subtopic_ordinal', ordinal, 'title', title, 'questions', n) ORDER BY ordinal)
-        FILTER (WHERE n < 10),
+        FILTER (WHERE n < 8),
       '[]'::jsonb
     ) AS short_questions
   FROM counts
@@ -1643,14 +1775,16 @@ def build_psy_05() -> tuple[str, list, dict]:
     nodes: list = []
     conn: dict = {}
     sys_terms = js_literal(load_system_prompt("extract_terms_v2.md"))
-    sys_q = js_literal(load_system_prompt("gen_questions_v3.md"))
+    sys_q = js_literal(load_system_prompt("gen_questions_v4.md"))
+    sys_fill = js_literal(load_system_prompt("fill_term_definitions_v1.md"))
     validator = load_validator_js()
     subtopic_lib = load_subtopic_questions_js()
+    finalize_embedded = sub_code(FINALIZE_Q_JS, VALIDATOR=validator)
 
     nodes.append(sticky("NOTE — In", "## In\nManual + Execute (passthrough). Lower-only overrides: `max_cost_usd_per_lecture`, `monthly_budget_usd`. Inactive.", -40, 40, 360, 140))
-    nodes.append(sticky("NOTE — Run/Load", "## Run / Load\nBackfill `terms` jobs for `konspekt_ready` → claim `terms`. Refuse when cards already exist for the lecture (no LLM).", 380, 40, 460, 140))
-    nodes.append(sticky("NOTE — LLM", "## LLM\n`extract_terms_v2` → Terms Ready gate: soft empty extract → course fallback; hard parse → Fail Context (retry). Then merge / MCQ.", 1000, 40, 560, 180))
-    nodes.append(sticky("NOTE — DB/Fin", "## DB / Fin\nUpsert questions by (subtopic_id, ordinal_in_subtopic) WHERE kind='life_mcq'. Job done + lecture `questions_ready`; counters incl. `short_questions` in jobs.payload. empty_konspekt keeps lecture status.", 3100, 40, 480, 160))
+    nodes.append(sticky("NOTE — Run/Load", "## Run / Load\nBackfill `terms` jobs for `konspekt_ready` → claim `terms`. Refuse when **active** cards exist (superseded life_mcq ignored).", 380, 40, 460, 140))
+    nodes.append(sticky("NOTE — LLM", "## LLM\n`extract_terms_v2` → fill empty defs (`fill_term_definitions_v1`) → `gen_questions_v4` per subtopic (theses, own terms only, anti-dupe). Shuffle correct_choice in code.", 1000, 40, 560, 180))
+    nodes.append(sticky("NOTE — DB/Fin", "## DB / Fin\nUpsert active life_mcq; excess ordinals → `superseded_at` (no DELETE). short_questions = n < 8. Job done + `questions_ready`.", 3100, 40, 480, 160))
 
     n_manual = manual_trigger(0, 300)
     n_exec = exec_trigger(0, 480)
@@ -1743,21 +1877,167 @@ return [{
         3180,
         140,
     )
+    n_needs_fill = iff(
+        "Run — Needs Fill Defs",
+        "={{ String($json.needs_fill) }}",
+        "true",
+        3300,
+        140,
+        "equals",
+    )
+    n_build_fill = code(
+        "LLM — Build Fill Defs",
+        sub_code(
+            r"""__SUBTOPIC_LIB__
+const C = $('Run — Init Constants').first().json.constants;
+const L = $('Load — Lecture').first().json;
+const M = items[0].json;
+const SYSTEM = __SYS_FILL__;
+const cpt = C.chars_per_token || 2;
+const est = (s) => Math.ceil(String(s || '').length / cpt);
+const empty = M.empty_definitions || [];
+const termsBlock = empty.map((t) => {
+  const al = (t.aliases || []).length ? ' (' + t.aliases.join(', ') + ')' : '';
+  return '- ' + t.canonical + al;
+}).join('\n');
+const user = [
+  'ТЕРМИНЫ_БЕЗ_ОПРЕДЕЛЕНИЯ\n' + termsBlock,
+  'ФРАГМЕНТ КОНСПЕКТА\n' + String(L.konspekt_md || '').slice(0, 12000),
+  'ФРАГМЕНТ ТРАНСКРИПТА\n' + String(L.transcript || '').slice(0, 12000),
+].join('\n\n');
+const P = C.prices_usd_per_1m;
+const inTokens = est(SYSTEM) + est(user);
+const projected = (inTokens * P.miss + (C.est_output_tokens_fill || 2500) * P.out) / 1e6;
+const spentLecture = Number(L.spent_lecture_usd) || 0;
+const spentMonth = Number(L.spent_month_usd) || 0;
+const lectureCap = C.max_cost_usd_per_lecture;
+const monthCap = C.monthly_budget_usd * C.budget_stop_ratio;
+let reason = null;
+if (spentLecture + projected > lectureCap) {
+  reason = 'budget_exceeded: лимит на лекцию перед fill_definitions';
+} else if (spentMonth + projected > monthCap) {
+  reason = 'budget_exceeded: 80% месяца перед fill_definitions';
+}
+if (reason) {
+  return [{ json: { ...M, skip_fill: true, budget_exceeded: true, error_message: reason }, pairedItem: 0 }];
+}
+return [{
+  json: {
+    ...M,
+    skip_fill: false,
+    budget_exceeded: false,
+    lecture_id: L.lecture_id,
+    job_id: L.job_id,
+    course_id: L.course_id,
+    step: 'fill_definitions',
+    prompt_version: C.prompt_versions.fill_definitions,
+    request_body: {
+      model: C.llm_model,
+      messages: [
+        { role: 'system', content: SYSTEM },
+        { role: 'user', content: user },
+      ],
+      thinking: C.thinking,
+      response_format: { type: 'json_object' },
+      max_tokens: Math.min(C.max_output_tokens, 4000),
+      temperature: C.temperature_terms,
+      stream: false,
+    },
+  },
+  pairedItem: 0,
+}];""",
+            SUBTOPIC_LIB=subtopic_lib,
+            SYS_FILL=sys_fill,
+        ),
+        3420,
+        40,
+    )
+    n_budget_fill = iff(
+        "LLM — Budget OK Fill",
+        "={{ String($json.budget_exceeded) }}",
+        "false",
+        3540,
+        40,
+        "equals",
+    )
+    n_http_fill = deepseek("Shared — DeepSeek Fill Defs", 3660, 40)
+    n_parse_fill = code(
+        "LLM — Parse Fill Defs",
+        sub_code(
+            r"""__SUBTOPIC_LIB__
+const C = $('Run — Init Constants').first().json.constants;
+const src = $('LLM — Build Fill Defs').first().json;
+__PARSE_FN__
+const p = parseDeepSeek(items[0].json, C, src, 'fill_definitions', C.prompt_versions.fill_definitions);
+function parseJson(text) {
+  let t = String(text || '').trim();
+  const m = t.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
+  if (m) t = m[1];
+  try { return { value: JSON.parse(t) }; } catch (e) {
+    const a = t.indexOf('{'); const b = t.lastIndexOf('}');
+    if (a >= 0 && b > a) {
+      try { return { value: JSON.parse(t.slice(a, b + 1)) }; } catch (e2) { /* fall */ }
+    }
+    return { error: 'invalid_json' };
+  }
+}
+let applied = { terms: src.terms || [], applied: [] };
+if (p.content.trim()) {
+  const pj = parseJson(p.content);
+  if (!pj.error) applied = applyFilledDefinitions(src.terms || [], pj.value);
+}
+return [{
+  json: {
+    ...src,
+    terms: applied.terms,
+    definitions_filled_llm: applied.applied,
+    usage_row: p.usage_row,
+    cost_exact: p.cost_exact,
+  },
+  pairedItem: 0,
+}];""",
+            SUBTOPIC_LIB=subtopic_lib,
+            PARSE_FN=PARSE_DEEPSEEK_JS,
+        ),
+        3780,
+        40,
+    )
+    n_log_fill = log_usage("DB — Log Usage Fill Defs", 3900, 40)
+    n_after_fill = code(
+        "LLM — After Fill Defs",
+        r"""const filled = $('LLM — Parse Fill Defs').first().json;
+const sd = $getWorkflowStaticData('global');
+sd.filledTerms = filled.terms || [];
+sd.fillSkipped = false;
+return [{ json: { ...filled, fill_skipped: false }, pairedItem: 0 }];""",
+        4020,
+        40,
+    )
+    n_skip_fill_pass = code(
+        "LLM — Skip Fill Pass",
+        r"""const M = $('LLM — Merge Thin Subtopics').first().json;
+const sd = $getWorkflowStaticData('global');
+sd.filledTerms = M.terms || [];
+sd.fillSkipped = true;
+return [{ json: { ...M, definitions_filled_llm: [], fill_skipped: true }, pairedItem: 0 }];""",
+        3420,
+        220,
+    )
     n_up_terms = pg(
         "DB — Upsert Terms",
         UPSERT_TERMS_SQL,
-        3400,
+        4240,
         140,
         """={{ [
   $('Load — Lecture').first().json.course_id,
   $('Load — Lecture').first().json.lecture_id,
-  JSON.stringify($('LLM — Merge Thin Subtopics').first().json.terms)
+  JSON.stringify($json.terms)
 ] }}""",
     )
     n_up_subs = pg(
         "DB — Upsert Subtopics",
         UPSERT_SUBTOPICS_SQL,
-        3620,
+        4460,
         140,
         """={{ [
   $('Load — Lecture').first().json.lecture_id,
@@ -1819,7 +2099,7 @@ return [{
     n_log_q = log_usage("DB — Log Usage Questions", 5060, 140)
     n_decide = code(
         "LLM — Decide Questions",
-        sub_code(DECIDE_Q_JS, FINALIZE=FINALIZE_Q_JS),
+        sub_code(DECIDE_Q_JS, FINALIZE=finalize_embedded),
         5280,
         140,
     )
@@ -1840,7 +2120,7 @@ return [{
     n_log_retry = log_usage("DB — Log Usage Questions Retry", 6160, 40)
     n_merge = code(
         "LLM — Merge Retry",
-        sub_code(MERGE_RETRY_JS, FINALIZE=FINALIZE_Q_JS),
+        sub_code(MERGE_RETRY_JS, FINALIZE=finalize_embedded),
         6380,
         40,
     )
@@ -1882,9 +2162,10 @@ return [{
     nodes.extend([
         n_manual, n_exec, n_init, n_backfill, n_claim, n_has, n_lecture, n_no_cards, n_has_konspekt,
         n_build_terms, n_budget_terms, n_http_terms, n_parse_terms, n_log_terms, n_terms_ready, n_terms_ok,
-        n_merge_thin, n_up_terms, n_up_subs, n_loop, n_spend, n_build_q, n_should_gen, n_note_no_terms,
-        n_budget_q, n_http_q, n_parse_q, n_log_q, n_decide, n_needs_retry, n_http_retry, n_parse_retry,
-        n_log_retry, n_merge, n_up_q, n_finish, n_fail_ctx, n_fail,
+        n_merge_thin, n_needs_fill, n_build_fill, n_budget_fill, n_http_fill, n_parse_fill, n_log_fill,
+        n_after_fill, n_skip_fill_pass, n_up_terms, n_up_subs, n_loop, n_spend, n_build_q, n_should_gen,
+        n_note_no_terms, n_budget_q, n_http_q, n_parse_q, n_log_q, n_decide, n_needs_retry, n_http_retry,
+        n_parse_retry, n_log_retry, n_merge, n_up_q, n_finish, n_fail_ctx, n_fail,
     ])
 
     link(conn, "In — Manual", "Run — Init Constants")
@@ -1908,7 +2189,19 @@ return [{
     link(conn, "LLM — Terms Ready", "Run — Terms Proceed")
     link(conn, "Run — Terms Proceed", "LLM — Merge Thin Subtopics", 0)
     link(conn, "Run — Terms Proceed", "Fin — Fail Context", 1)
-    link(conn, "LLM — Merge Thin Subtopics", "DB — Upsert Terms")
+    link(conn, "LLM — Merge Thin Subtopics", "Run — Needs Fill Defs")
+    # needs_fill=true → LLM fill; false → skip pass. Budget fail on fill → skip (keep heuristic defs).
+    link(conn, "Run — Needs Fill Defs", "LLM — Build Fill Defs", 0)
+    link(conn, "Run — Needs Fill Defs", "LLM — Skip Fill Pass", 1)
+    link(conn, "LLM — Build Fill Defs", "LLM — Budget OK Fill")
+    link(conn, "LLM — Budget OK Fill", "Shared — DeepSeek Fill Defs", 0)
+    link(conn, "LLM — Budget OK Fill", "LLM — Skip Fill Pass", 1)
+    link(conn, "Shared — DeepSeek Fill Defs", "LLM — Parse Fill Defs", 0)
+    link(conn, "Shared — DeepSeek Fill Defs", "LLM — Skip Fill Pass", 1)
+    link(conn, "LLM — Parse Fill Defs", "DB — Log Usage Fill Defs")
+    link(conn, "DB — Log Usage Fill Defs", "LLM — After Fill Defs")
+    link(conn, "LLM — After Fill Defs", "DB — Upsert Terms")
+    link(conn, "LLM — Skip Fill Pass", "DB — Upsert Terms")
     link(conn, "DB — Upsert Terms", "DB — Upsert Subtopics")
     link(conn, "DB — Upsert Subtopics", "Run — Loop Subtopics")
     link(conn, "Run — Loop Subtopics", "DB — Finish Job", 0)
