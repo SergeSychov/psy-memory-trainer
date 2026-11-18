@@ -246,38 +246,54 @@ test('resolveTermsForSubtopic: ownOnly default — no lecture/course clone fallb
   assert.equal(empty.terms.length, 0);
 });
 
-test('buildQuestionsRequestParts skips LLM when no terms anywhere', () => {
+test('buildQuestionsRequestParts skips when no defined terms and empty fragment', () => {
   const parts = buildQuestionsRequestParts({
-    subtopic: { ordinal: 1, title: 'Пусто' },
+    subtopic: { ordinal: 1, title: 'Пусто xyzzy' },
     allTerms: [{ canonical: 'x', definition: null, subtopic_ordinal: 1 }],
     courseTerms: [{ canonical: 'y', definition: '  ' }],
-    konspektMd: KONSPEKT,
+    konspektMd: '',
     chunks: [],
-    transcript: 'текст',
+    transcript: '',
   });
   assert.equal(parts.skip, true);
-  assert.equal(parts.skip_reason, 'no_terms_available');
+  assert.equal(parts.skip_reason, 'no_terms_or_theses');
   assert.equal(parts.request_ready, false);
   assert.equal(parts.user_base, null);
   assert.deepEqual(parts.term_canonicals, []);
 });
 
-test('buildQuestionsRequestParts skips when only other-subtopic terms (no clone fallback)', () => {
+test('buildQuestionsRequestParts thesis mode when own terms missing but fragment has theses', () => {
   const parts = buildQuestionsRequestParts({
-    subtopic: { ordinal: 4, title: 'Связь трёх узлов' },
-    allTerms: [
-      { canonical: 'окно внимания', definition: 'отрезок', subtopic_ordinal: 1, aliases: [] },
-    ],
+    subtopic: { ordinal: 1, title: 'Окно внимания' },
+    allTerms: [],
     courseTerms: [],
     konspektMd: KONSPEKT,
-    chunks: [{ text: 'окно внимания в быту' }],
+    chunks: [],
+    constants: {
+      questions_konspekt_max_chars: DEFAULTS.konspektMaxChars,
+      questions_transcript_max_chars: DEFAULTS.transcriptMaxChars,
+    },
+  });
+  assert.equal(parts.skip, false);
+  assert.equal(parts.thesis_mode, true);
+  assert.ok(parts.theses.length >= 1);
+  assert.ok(parts.user_base.includes('source_kind=thesis'));
+});
+
+test('buildQuestionsRequestParts skips when no terms and no theses', () => {
+  const parts = buildQuestionsRequestParts({
+    subtopic: { ordinal: 9, title: 'Абсолютно пустой раздел xyz' },
+    allTerms: [],
+    courseTerms: [],
+    konspektMd: '# Только заголовок\n\n## Другое\nкоротко',
+    chunks: [],
     constants: {
       questions_konspekt_max_chars: DEFAULTS.konspektMaxChars,
       questions_transcript_max_chars: DEFAULTS.transcriptMaxChars,
     },
   });
   assert.equal(parts.skip, true);
-  assert.equal(parts.skip_reason, 'no_terms_available');
+  assert.equal(parts.skip_reason, 'no_terms_or_theses');
 });
 
 test('buildQuestionsRequestParts includes theses and used plots for own terms', () => {

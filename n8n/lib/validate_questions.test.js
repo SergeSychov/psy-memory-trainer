@@ -9,6 +9,8 @@ const {
   shuffleQuestionChoices,
   stemSimilarity,
   termAnswerKey,
+  focusAnswerKey,
+  findParaphrasePairs,
   QUESTIONS_MIN,
 } = require('./validate_questions.js');
 
@@ -107,7 +109,7 @@ test('dedupeQuestions drops similar stems and term-answer pairs', () => {
   const { kept, dropped } = dedupeQuestions([a, b, c, d], { existingStems: [], existingTermAnswers: [] });
   assert.equal(kept.length, 2);
   assert.ok(dropped.some((x) => x.reason === 'similar_stem'));
-  assert.ok(dropped.some((x) => x.reason === 'duplicate_term_answer'));
+  assert.ok(dropped.some((x) => x.reason === 'duplicate_focus_answer' || x.reason === 'duplicate_term_answer'));
 });
 
 test('shuffleQuestionChoices is deterministic by seed', () => {
@@ -167,4 +169,39 @@ test('invalid json string', () => {
   const r = validateQuestionsPayload('{nope', ctx);
   assert.equal(r.ok, false);
   assert.ok(r.errors.includes('invalid_json'));
+});
+
+test('thesis questions ok without term', () => {
+  const qs = eightQuestions().map((q, i) => ({
+    ...q,
+    source_kind: 'thesis',
+    term_canonical: null,
+    thesis: `тезис номер ${i + 1} про бытовой ритуал`,
+  }));
+  const r = validateQuestionsPayload(
+    { subtopic_ordinal: 1, shortfall: false, questions: qs },
+    { termCanonicals: [], allowThesis: true, thesisOnly: true, minQuestions: 8, maxQuestions: 12 },
+  );
+  assert.equal(r.ok, true);
+  assert.equal(r.validQuestions.length, 8);
+});
+
+test('findParaphrasePairs catches focus+answer rewrite', () => {
+  const a = baseQ(1, {
+    stem: 'Анна дома с ребёнком зовёт бабушку жить вместе — это три поколения?',
+    a: 'да, три поколения одной семьи',
+  });
+  a.source_kind = 'thesis';
+  a.thesis = 'три поколения межпоколенная';
+  a.term_canonical = null;
+  const b = baseQ(2, {
+    stem: 'Анна дома с ребёнком зовёт бабушку жить вместе — межпоколенная ли семья?',
+    a: 'да три поколения одной семьи',
+  });
+  b.source_kind = 'thesis';
+  b.thesis = 'три поколения межпоколенная';
+  b.term_canonical = null;
+  const pairs = findParaphrasePairs([a, b], { focusAnswerSimilarity: 0.5, similarityThreshold: 0.5 });
+  assert.ok(pairs.length >= 1);
+  assert.ok(focusAnswerKey(a).includes('||'));
 });

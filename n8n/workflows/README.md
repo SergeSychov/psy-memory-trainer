@@ -79,7 +79,8 @@ JSON-экспорт и `.id` файлы. Деплой: `python3 n8n/scripts/pull
 |---|---|
 | Триггеры | `In — Manual`, `In — Execute` (passthrough; опц. `max_cost_usd_per_lecture`, `monthly_budget_usd` — только вниз) — **не активировать** |
 | Credentials | `psy Supabase (psy_n8n)`, `DeepSeek account` |
-| Промпты | `extract_terms_v2`, `fill_term_definitions_v1`, `gen_questions_v4`; валидатор + `subtopic_questions.js` встроены в Code при сборке |
+| Промпты | `extract_terms_v2`, `fill_term_definitions_v2`, `gen_questions_v5`; валидатор + `subtopic_questions.js` встроены в Code при сборке |
+| Kick | `only_subtopic_ordinals: [1,2]`, `skip_terms_extract: true` — догон без extract и без перегенерации других подтем |
 | Фрагменты | konspekt ≤ ~5.5k (секция ± сосед; miss-окно по позиции подтемы), transcript ≤ ~7k (хиты ±1; без chunks — нарезка transcript ~1k) |
 | Термины | soft (`parseOk`): пустой extract → course gate / `no_terms_available`; hard parse → Fail Context. Перед MCQ: heuristic + LLM fill пустых definition. MCQ только по терминам **своей** подтемы с definition (без clone-fallback) |
 | Merge thin | только при совпавшей `##` и длине primary < 400; score 0 не сливает |

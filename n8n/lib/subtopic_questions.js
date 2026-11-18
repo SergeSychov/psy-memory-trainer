@@ -256,63 +256,130 @@ function extractTheses(fragment, maxTheses = 12) {
 }
 
 /**
- * Deterministic fill of empty definitions from konspekt/transcript patterns:
- * **term** — def | term — def | term: def
- * Does not invent text; only copies a nearby clause after the term mention.
+ * Accept only a finished 1–2 sentence definition of meaning.
+ * Reject: digit/percent scraps, mid-paragraph quotes, thesis-as-definition, one-word labels.
+ */
+function isValidDefinition(text, canonical) {
+  const def = String(text || '').trim();
+  if (!def) return { ok: false, reason: 'empty' };
+  if (def.length < 12) return { ok: false, reason: 'too_short' };
+  if (def.length > 400) return { ok: false, reason: 'too_long' };
+  // Bare stats / percent scraps without a copula about the term.
+  if (/^\s*(на\s+)?\d+([.,]\d+)?\s*%/.test(def) || /^[\d\s%,.;–—+-]+$/.test(def)) {
+    return { ok: false, reason: 'stats_fragment' };
+  }
+  const letters = (def.match(/[а-яa-z]/gi) || []).length;
+  const digits = (def.match(/\d/g) || []).length;
+  if (letters < 8) return { ok: false, reason: 'too_few_letters' };
+  if (digits > letters) return { ok: false, reason: 'digit_heavy' };
+  // One-word / two-token label without explanation.
+  const words = def.split(/\s+/).filter(Boolean);
+  if (words.length < 3) return { ok: false, reason: 'label_only' };
+  // Summary scraps: "фундамент; супружеские отношения первичны"
+  if (/^фундамент\b/i.test(def)) return { ok: false, reason: 'label_scrap' };
+  if (/;/.test(def) && words.length < 10 && !/(это|явля|называ|означа)/i.test(def)) {
+    return { ok: false, reason: 'label_scrap' };
+  }
+  // Starts mid-thought (lowercase continuation / bare conjunction).
+  if (/^(и|а|но|или|на|при|для|что|как|это\s+на\s+\d)/i.test(def) && !/^[А-ЯA-Z«"]/.test(def)) {
+    // allow "это …" as definition pattern
+    if (!/^это\s+\S+/i.test(def)) return { ok: false, reason: 'mid_paragraph' };
+  }
+  // Thesis-like causal claim without defining the term (heuristic).
+  const name = String(canonical || '').trim().toLowerCase();
+  const lower = def.toLowerCase();
+  const looksLikeThesis =
+    /(поэтому|значит|следует|исследование показало|по данным)/i.test(def) &&
+    name &&
+    !lower.includes(name.split(/\s+/)[0]) &&
+    !/^(это|—|–|-)/.test(lower) &&
+    !lower.includes(' — ') &&
+    !lower.includes(' – ');
+  if (looksLikeThesis) return { ok: false, reason: 'thesis_not_definition' };
+  return { ok: true, reason: null };
+}
+
+function needsDefinitionRefill(definition, canonical) {
+  if (definition == null || !String(definition).trim()) return true;
+  return !isValidDefinition(definition, canonical).ok;
+}
+
+/**
+ * Deterministic fill of empty/broken definitions from konspekt/transcript patterns.
+ * Only keeps candidates that pass isValidDefinition.
  */
 function fillDefinitionsFromText(terms, konspekt, transcript) {
   const hay = `${String(konspekt || '')}\n${String(transcript || '')}`;
   if (!hay.trim()) {
-    return { terms: (terms || []).map((t) => ({ ...t })), filled: [] };
+    return { terms: (terms || []).map((t) => ({ ...t })), filled: [], rejected: [] };
   }
   const filled = [];
+  const rejected = [];
   const next = (terms || []).map((t) => {
-    if (t.definition != null && String(t.definition).trim()) return { ...t };
+    if (!needsDefinitionRefill(t.definition, t.canonical)) return { ...t };
     const names = [t.canonical].concat(t.aliases || []).map((n) => String(n || '').trim()).filter(Boolean);
     let definition = null;
     for (const name of names) {
       if (name.length < 3) continue;
       const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const patterns = [
-        new RegExp(`\\*\\*${esc}\\*\\*\\s*[—:\\-]\\s*([^\\n.]{8,200})`, 'i'),
-        new RegExp(`(?:^|\\n)\\s*${esc}\\s*[—:\\-]\\s*([^\\n.]{8,200})`, 'i'),
-        new RegExp(`${esc}\\s+(?:—|–|-)\\s+([^\\n.]{8,200})`, 'i'),
+        new RegExp(`\\*\\*${esc}\\*\\*\\s*[—:\\-]\\s*([^\\n.]{12,220})`, 'i'),
+        new RegExp(`(?:^|\\n)\\s*${esc}\\s*[—:\\-]\\s*([^\\n.]{12,220})`, 'i'),
+        new RegExp(`${esc}\\s+(?:—|–|-)\\s+([^\\n.]{12,220})`, 'i'),
+        new RegExp(`${esc}\\s+[—–-]\\s*это\\s+([^\\n.]{12,220})`, 'i'),
       ];
       for (const re of patterns) {
         const m = hay.match(re);
         if (m && m[1]) {
-          definition = m[1].trim().replace(/[;,.]+$/, '');
-          break;
+          const candidate = m[1].trim().replace(/[;,.]+$/, '');
+          const check = isValidDefinition(candidate, t.canonical);
+          if (check.ok) {
+            definition = candidate;
+            break;
+          }
+          rejected.push({ canonical: t.canonical, reason: check.reason, sample: candidate.slice(0, 80) });
         }
       }
       if (definition) break;
     }
-    if (!definition) return { ...t };
+    if (!definition) return { ...t, definition: needsDefinitionRefill(t.definition, t.canonical) ? null : t.definition };
     filled.push(t.canonical);
     return { ...t, definition };
   });
-  return { terms: next, filled };
+  return { terms: next, filled, rejected };
 }
 
 /**
- * Merge LLM fill_term_definitions payload into terms (only empty → non-empty).
+ * Merge LLM fill_term_definitions payload into terms (only empty/broken → valid).
  */
 function applyFilledDefinitions(terms, filledPayload) {
   const byCanon = new Map();
+  const rejected = [];
   for (const row of (filledPayload && filledPayload.terms) || []) {
     const c = String((row && row.canonical) || '').trim().toLowerCase();
     if (!c) continue;
     const def = row.definition == null ? null : String(row.definition).trim() || null;
     if (!def) continue;
+    const check = isValidDefinition(def, c);
+    if (!check.ok) {
+      rejected.push({ canonical: c, reason: check.reason, sample: def.slice(0, 80) });
+      continue;
+    }
     const life =
       def && row.life_example != null ? String(row.life_example).trim() || null : null;
     byCanon.set(c, { definition: def, life_example: life });
   }
   const applied = [];
   const next = (terms || []).map((t) => {
-    if (t.definition != null && String(t.definition).trim()) return { ...t };
+    if (!needsDefinitionRefill(t.definition, t.canonical)) return { ...t };
     const hit = byCanon.get(String(t.canonical || '').trim().toLowerCase());
-    if (!hit) return { ...t };
+    if (!hit) {
+      // Drop broken existing definition so it stays empty rather than garbage.
+      if (needsDefinitionRefill(t.definition, t.canonical) && t.definition) {
+        return { ...t, definition: null, life_example: null };
+      }
+      return { ...t };
+    }
     applied.push(t.canonical);
     return {
       ...t,
@@ -320,7 +387,7 @@ function applyFilledDefinitions(terms, filledPayload) {
       life_example: hit.life_example || t.life_example || null,
     };
   });
-  return { terms: next, applied };
+  return { terms: next, applied, rejected };
 }
 
 /**
@@ -567,25 +634,7 @@ function buildQuestionsRequestParts(input) {
   const transcriptMax = constants.questions_transcript_max_chars || DEFAULTS.transcriptMaxChars;
 
   const resolved = resolveTermsForSubtopic(subtopic.ordinal, allTerms, courseTerms, { ownOnly });
-  if (!resolved.terms.length) {
-    return {
-      skip: true,
-      skip_reason: 'no_terms_available',
-      terms_fallback: false,
-      terms_source: null,
-      term_canonicals: [],
-      theses: [],
-      konspekt_fragment: '',
-      konspekt_matched: false,
-      transcript_fragment: '',
-      transcript_matched: false,
-      user_base: null,
-      request_ready: false,
-    };
-  }
-
-  const termCanonicals = resolved.terms.map((t) => t.canonical);
-  // Fragment by title + own terms only (avoid pulling neighbour-topic text via foreign terms).
+  // Fragment by title (+ own terms if any). Never dump whole konspekt / clone foreign terms.
   const konspektFrag = pickKonspektFragment(
     konspektMd,
     subtopic.title,
@@ -601,9 +650,31 @@ function buildQuestionsRequestParts(input) {
     transcript,
     { subtopicIndex, subtopicCount },
   );
-
   const theses = extractTheses(konspektFrag.text, 12);
-  const termsBlock = resolved.terms.map((t) => '- ' + t.canonical + ': ' + t.definition).join('\n');
+  const thesisMode = !resolved.terms.length && theses.length > 0;
+
+  if (!resolved.terms.length && !theses.length) {
+    return {
+      skip: true,
+      skip_reason: 'no_terms_or_theses',
+      terms_fallback: false,
+      terms_source: null,
+      term_canonicals: [],
+      theses: [],
+      thesis_mode: false,
+      konspekt_fragment: konspektFrag.text || '',
+      konspekt_matched: konspektFrag.matched,
+      transcript_fragment: '',
+      transcript_matched: false,
+      user_base: null,
+      request_ready: false,
+    };
+  }
+
+  const termCanonicals = resolved.terms.map((t) => t.canonical);
+  const termsBlock = resolved.terms.length
+    ? resolved.terms.map((t) => '- ' + t.canonical + ': ' + t.definition).join('\n')
+    : '[пусто — пиши только по ТЕЗИСАМ; source_kind=thesis, term_canonical=null]';
   const thesesBlock = theses.length
     ? theses.map((t, i) => (i + 1) + '. ' + t).join('\n')
     : '[тезисы не извлечены — опирайся на фрагмент конспекта]';
@@ -622,7 +693,7 @@ function buildQuestionsRequestParts(input) {
     'ТЕРМИНЫ\n' + termsBlock,
     'ФРАГМЕНТ КОНСПЕКТА\n' + konspektFrag.text,
     'ФРАГМЕНТ ТРАНСКРИПТА\n' + transcriptText,
-    'УЖЕ_ИСПОЛЬЗОВАНО\nСюжеты:\n' + usedPlotsBlock + '\nПары термин–ответ:\n' + usedAnswersBlock,
+    'УЖЕ_ИСПОЛЬЗОВАНО\nСюжеты:\n' + usedPlotsBlock + '\nПары фокус–ответ:\n' + usedAnswersBlock,
   ].join('\n\n');
 
   return {
@@ -632,6 +703,7 @@ function buildQuestionsRequestParts(input) {
     terms_source: resolved.source,
     term_canonicals: termCanonicals,
     theses,
+    thesis_mode: thesisMode,
     konspekt_fragment: konspektFrag.text,
     konspekt_matched: konspektFrag.matched,
     transcript_fragment: transcriptText,
@@ -655,6 +727,8 @@ module.exports = {
   termsWithDefinition,
   resolveTermsForSubtopic,
   extractTheses,
+  isValidDefinition,
+  needsDefinitionRefill,
   fillDefinitionsFromText,
   applyFilledDefinitions,
   mergeThinSubtopics,

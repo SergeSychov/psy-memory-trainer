@@ -1,13 +1,14 @@
 'use strict';
 
 /**
- * Validate gen_questions JSON for one subtopic (psy_05 / gen_questions_v4+).
+ * Validate gen_questions JSON for one subtopic (psy_05 / gen_questions_v5+).
  * Pure function — no I/O. Used from n8n Code node and node:test.
  */
 
 const QUESTIONS_MIN = 8;
 const QUESTIONS_MAX = 12;
 const STEM_SIMILARITY_THRESHOLD = 0.72;
+const FOCUS_ANSWER_SIMILARITY_THRESHOLD = 0.82;
 const MAX_LETTER_SHARE = 0.35;
 
 function normalizeChoice(text) {
@@ -41,35 +42,81 @@ function stemSimilarity(a, b) {
   return union ? inter / union : 0;
 }
 
-function termAnswerKey(termCanonical, correctText) {
-  return normalizeChoice(termCanonical) + '||' + normalizeChoice(correctText);
-}
-
 function correctChoiceText(q) {
   const map = { A: q.choice_a, B: q.choice_b, C: q.choice_c, D: q.choice_d };
   return map[q.correct_choice] || '';
 }
 
+/** Focus fingerprint: thesis label or term canonical. */
+function questionFocus(q) {
+  const kind = q && q.source_kind === 'thesis' ? 'thesis' : 'term';
+  if (kind === 'thesis') {
+    return normalizeChoice(q.thesis || q.stem || '');
+  }
+  return normalizeChoice(q.term_canonical || '');
+}
+
 /**
- * Drop near-duplicate stems and duplicate term–answer pairs.
- * Prefers earlier items. Returns { kept, dropped }.
+ * Semantic-ish key: focus (term|thesis) + correct answer.
+ * Used for cross-subtopic paraphrase detection without paid embeddings.
+ */
+function focusAnswerKey(q) {
+  return questionFocus(q) + '||' + normalizeChoice(correctChoiceText(q));
+}
+
+/** @deprecated alias kept for callers */
+function termAnswerKey(termCanonical, correctText) {
+  return normalizeChoice(termCanonical) + '||' + normalizeChoice(correctText);
+}
+
+function normalizeQuestionShape(q) {
+  const sourceKind = q.source_kind === 'thesis' ? 'thesis' : 'term';
+  return {
+    ...q,
+    source_kind: sourceKind,
+    term_canonical: sourceKind === 'term' ? q.term_canonical : null,
+    thesis: sourceKind === 'thesis' ? String(q.thesis || '').trim() || null : null,
+  };
+}
+
+/**
+ * Drop near-duplicate stems and duplicate focus–answer pairs (incl. paraphrases).
  */
 function dedupeQuestions(questions, opts = {}) {
   const threshold = opts.similarityThreshold != null ? opts.similarityThreshold : STEM_SIMILARITY_THRESHOLD;
+  const focusThreshold =
+    opts.focusAnswerSimilarity != null ? opts.focusAnswerSimilarity : FOCUS_ANSWER_SIMILARITY_THRESHOLD;
   const existingStems = opts.existingStems || [];
-  const existingKeys = new Set((opts.existingTermAnswers || []).map((k) => String(k)));
+  const existingKeys = (opts.existingTermAnswers || []).map((k) => String(k));
   const kept = [];
   const dropped = [];
 
-  for (const q of questions || []) {
+  function isParaphraseOf(q, otherKeyOrQ) {
+    const key = typeof otherKeyOrQ === 'string' ? otherKeyOrQ : focusAnswerKey(otherKeyOrQ);
+    const otherQ = typeof otherKeyOrQ === 'string' ? null : otherKeyOrQ;
+    const mine = focusAnswerKey(q);
+    if (mine === key) return true;
+    const [f1, a1] = mine.split('||');
+    const [f2, a2] = key.split('||');
+    if (!f1 || !f2 || !a1 || !a2) return false;
+    const focusSim = stemSimilarity(f1, f2);
+    const ansSim = stemSimilarity(a1, a2);
+    if (focusSim < focusThreshold || ansSim < focusThreshold) return false;
+    // Fuzzy paraphrase: require stem overlap too, so different situations
+    // with the same term but different answers/actions are not wiped.
+    const stemSim = otherQ ? stemSimilarity(q.stem, otherQ.stem) : 0;
+    return stemSim >= Math.min(threshold, 0.55);
+  }
+
+  for (const raw of questions || []) {
+    const q = normalizeQuestionShape(raw);
     const stemNorm = normalizeStem(q.stem);
-    const key = termAnswerKey(q.term_canonical, correctChoiceText(q));
     let dup = false;
     let reason = null;
 
-    if (existingKeys.has(key) || kept.some((k) => termAnswerKey(k.term_canonical, correctChoiceText(k)) === key)) {
+    if (existingKeys.some((k) => isParaphraseOf(q, k)) || kept.some((k) => isParaphraseOf(q, k))) {
       dup = true;
-      reason = 'duplicate_term_answer';
+      reason = 'duplicate_focus_answer';
     }
     if (!dup) {
       for (const prev of existingStems.concat(kept.map((k) => k.stem))) {
@@ -83,16 +130,67 @@ function dedupeQuestions(questions, opts = {}) {
     if (dup) dropped.push({ question: q, reason });
     else {
       kept.push(q);
-      existingKeys.add(key);
+      existingKeys.push(focusAnswerKey(q));
     }
   }
   return { kept, dropped };
 }
 
 /**
- * Heuristic: case/action question vs term-naming.
- * Term-naming ≈ asks «как называется» / «какой термин» without a concrete situation verb.
+ * Report-mode paraphrase pairs across a flat list (lecture-wide).
+ * Does not mutate; returns pairs of indices with reasons.
  */
+function findParaphrasePairs(questions, opts = {}) {
+  const threshold = opts.similarityThreshold != null ? opts.similarityThreshold : STEM_SIMILARITY_THRESHOLD;
+  const focusThreshold =
+    opts.focusAnswerSimilarity != null ? opts.focusAnswerSimilarity : FOCUS_ANSWER_SIMILARITY_THRESHOLD;
+  const list = (questions || []).map(normalizeQuestionShape);
+  const pairs = [];
+  for (let i = 0; i < list.length; i += 1) {
+    for (let j = i + 1; j < list.length; j += 1) {
+      const a = list[i];
+      const b = list[j];
+      const stemSim = stemSimilarity(a.stem, b.stem);
+      const focusSim = stemSimilarity(questionFocus(a), questionFocus(b));
+      const ansSim = stemSimilarity(correctChoiceText(a), correctChoiceText(b));
+      let reason = null;
+      if (stemSim >= threshold) reason = 'similar_stem';
+      else if (
+        focusSim >= focusThreshold &&
+        ansSim >= focusThreshold &&
+        stemSim >= Math.min(threshold, 0.45)
+      ) {
+        reason = 'duplicate_focus_answer';
+      }
+      if (reason) {
+        pairs.push({
+          i,
+          j,
+          reason,
+          stem_similarity: Number(stemSim.toFixed(3)),
+          focus_similarity: Number(focusSim.toFixed(3)),
+          answer_similarity: Number(ansSim.toFixed(3)),
+          a: {
+            id: a.id,
+            source_kind: a.source_kind,
+            focus: questionFocus(a),
+            stem: a.stem,
+            correct: correctChoiceText(a),
+          },
+          b: {
+            id: b.id,
+            source_kind: b.source_kind,
+            focus: questionFocus(b),
+            stem: b.stem,
+            correct: correctChoiceText(b),
+          },
+        });
+      }
+    }
+  }
+  return pairs;
+}
+
 function isCaseOrActionQuestion(q) {
   const stem = normalizeStem(q.stem);
   const naming =
@@ -110,11 +208,9 @@ function isCaseOrActionQuestion(q) {
 function caseActionShare(questions) {
   const list = questions || [];
   if (!list.length) return 0;
-  const n = list.filter(isCaseOrActionQuestion).length;
-  return n / list.length;
+  return list.filter(isCaseOrActionQuestion).length / list.length;
 }
 
-/** FNV-1a 32-bit → unsigned int seed. */
 function hashSeed(str) {
   let h = 2166136261;
   const s = String(str || '');
@@ -136,10 +232,6 @@ function mulberry32(seed) {
   };
 }
 
-/**
- * Deterministically permute A–D so correct_choice is not left to the LLM.
- * Optional letterCounts: prefer a letter whose current share stays ≤ maxShare.
- */
 function shuffleQuestionChoices(q, seedKey, opts = {}) {
   const letterCounts = opts.letterCounts || { A: 0, B: 0, C: 0, D: 0 };
   const maxShare = opts.maxLetterShare != null ? opts.maxLetterShare : MAX_LETTER_SHARE;
@@ -150,7 +242,6 @@ function shuffleQuestionChoices(q, seedKey, opts = {}) {
   }));
   const correctIdx = { A: 0, B: 1, C: 2, D: 3 }[q.correct_choice];
   if (correctIdx == null) return { ...q };
-  const correctSlot = slots[correctIdx];
 
   const rng = mulberry32(hashSeed(seedKey || q.stem || ''));
   const order = [0, 1, 2, 3];
@@ -162,7 +253,6 @@ function shuffleQuestionChoices(q, seedKey, opts = {}) {
   }
 
   const total = letters.reduce((s, L) => s + (letterCounts[L] || 0), 0);
-  // Bias only after we have lecture-wide counts; otherwise keep pure seeded shuffle.
   if (total > 0) {
     const ranked = letters
       .map((L, i) => ({ L, i, count: letterCounts[L] || 0, share: (letterCounts[L] || 0) / total }))
@@ -190,15 +280,13 @@ function shuffleQuestionChoices(q, seedKey, opts = {}) {
   return out;
 }
 
-/**
- * Finalize list: dedupe → cap → shuffle with lecture letter balance.
- */
 function finalizeQuestions(list, cap, opts = {}) {
   const maxCap = cap != null ? cap : QUESTIONS_MAX;
   const deduped = dedupeQuestions(list, {
     existingStems: opts.existingStems || [],
     existingTermAnswers: opts.existingTermAnswers || [],
     similarityThreshold: opts.similarityThreshold,
+    focusAnswerSimilarity: opts.focusAnswerSimilarity,
   });
   const letterCounts = { A: 0, B: 0, C: 0, D: 0, ...(opts.letterCounts || {}) };
   const sliced = deduped.kept.slice(0, maxCap);
@@ -209,21 +297,24 @@ function finalizeQuestions(list, cap, opts = {}) {
       maxLetterShare: opts.maxLetterShare,
     });
     letterCounts[shuffled.correct_choice] = (letterCounts[shuffled.correct_choice] || 0) + 1;
+    const shaped = normalizeQuestionShape(shuffled);
     return {
       ordinal: i + 1,
-      term_canonical: shuffled.term_canonical,
-      stem: shuffled.stem,
-      choice_a: shuffled.choice_a,
-      choice_b: shuffled.choice_b,
-      choice_c: shuffled.choice_c,
-      choice_d: shuffled.choice_d,
-      correct_choice: shuffled.correct_choice,
-      explanation: shuffled.explanation,
+      source_kind: shaped.source_kind,
+      term_canonical: shaped.term_canonical,
+      thesis: shaped.thesis,
+      stem: shaped.stem,
+      choice_a: shaped.choice_a,
+      choice_b: shaped.choice_b,
+      choice_c: shaped.choice_c,
+      choice_d: shaped.choice_d,
+      correct_choice: shaped.correct_choice,
+      explanation: shaped.explanation,
       choice_explanations: {
-        A: shuffled.explanation_a,
-        B: shuffled.explanation_b,
-        C: shuffled.explanation_c,
-        D: shuffled.explanation_d,
+        A: shaped.explanation_a,
+        B: shaped.explanation_b,
+        C: shaped.explanation_c,
+        D: shaped.explanation_d,
       },
     };
   });
@@ -235,20 +326,11 @@ function finalizeQuestions(list, cap, opts = {}) {
   };
 }
 
-/**
- * @param {unknown} raw parsed JSON (object) or string
- * @param {{
- *   termCanonicals: string[],
- *   existingStems?: string[],
- *   existingTermAnswers?: string[],
- *   minQuestions?: number,
- *   maxQuestions?: number,
- *   similarityThreshold?: number,
- * }} ctx
- */
 function validateQuestionsPayload(raw, ctx) {
   const errors = [];
   const termSet = new Set((ctx.termCanonicals || []).map((t) => String(t)));
+  const allowThesis = ctx.allowThesis !== false;
+  const thesisOnly = Boolean(ctx.thesisOnly);
   const existingStems = ctx.existingStems || [];
   const existingTermAnswers = ctx.existingTermAnswers || [];
   const minQ = ctx.minQuestions != null ? ctx.minQuestions : QUESTIONS_MIN;
@@ -284,7 +366,9 @@ function validateQuestionsPayload(raw, ctx) {
   }
 
   const allowedQ = new Set([
+    'source_kind',
     'term_canonical',
+    'thesis',
     'kind',
     'stem',
     'choice_a',
@@ -300,22 +384,41 @@ function validateQuestionsPayload(raw, ctx) {
   ]);
 
   const stemsInBatch = [];
-  const keysInBatch = new Set();
+  const keysInBatch = [];
   const structurallyValid = [];
 
-  data.questions.forEach((q, idx) => {
+  data.questions.forEach((rawQ, idx) => {
     const prefix = `q${idx}`;
-    if (!q || typeof q !== 'object' || Array.isArray(q)) {
+    if (!rawQ || typeof rawQ !== 'object' || Array.isArray(rawQ)) {
       errors.push(`${prefix}:not_object`);
       return;
     }
-    for (const key of Object.keys(q)) {
+    for (const key of Object.keys(rawQ)) {
       if (!allowedQ.has(key)) errors.push(`${prefix}:extra_field:${key}`);
     }
 
-    const required = [...allowedQ];
-    for (const key of required) {
-      if (q[key] === undefined || q[key] === null || q[key] === '') {
+    // Backward compat: missing source_kind → term (v3/v4 payloads).
+    const q = normalizeQuestionShape({
+      ...rawQ,
+      source_kind: rawQ.source_kind || (rawQ.term_canonical ? 'term' : 'thesis'),
+    });
+
+    const requiredBase = [
+      'kind',
+      'stem',
+      'choice_a',
+      'choice_b',
+      'choice_c',
+      'choice_d',
+      'correct_choice',
+      'explanation',
+      'explanation_a',
+      'explanation_b',
+      'explanation_c',
+      'explanation_d',
+    ];
+    for (const key of requiredBase) {
+      if (rawQ[key] === undefined || rawQ[key] === null || rawQ[key] === '') {
         errors.push(`${prefix}:missing:${key}`);
       }
     }
@@ -324,15 +427,26 @@ function validateQuestionsPayload(raw, ctx) {
     if (!['A', 'B', 'C', 'D'].includes(q.correct_choice)) {
       errors.push(`${prefix}:bad_correct_choice`);
     }
-    if (!termSet.has(String(q.term_canonical || ''))) {
-      errors.push(`${prefix}:unknown_term:${q.term_canonical}`);
+    if (!['term', 'thesis'].includes(q.source_kind)) {
+      errors.push(`${prefix}:bad_source_kind`);
+    }
+
+    if (q.source_kind === 'term') {
+      if (!q.term_canonical) errors.push(`${prefix}:missing:term_canonical`);
+      else if (!termSet.has(String(q.term_canonical))) {
+        errors.push(`${prefix}:unknown_term:${q.term_canonical}`);
+      }
+      if (thesisOnly) errors.push(`${prefix}:term_not_allowed_in_thesis_only`);
+    } else {
+      if (!allowThesis) errors.push(`${prefix}:thesis_not_allowed`);
+      if (!q.thesis) errors.push(`${prefix}:missing:thesis`);
+      if (q.term_canonical) errors.push(`${prefix}:term_canonical_must_be_null_for_thesis`);
     }
 
     const choices = [q.choice_a, q.choice_b, q.choice_c, q.choice_d].map(normalizeChoice);
     if (choices.some((c) => !c)) errors.push(`${prefix}:empty_choice`);
     if (new Set(choices).size !== 4) errors.push(`${prefix}:duplicate_choices`);
 
-    // Near-synonym distractors: any two choices with very high similarity
     for (let i = 0; i < choices.length; i += 1) {
       for (let j = i + 1; j < choices.length; j += 1) {
         if (stemSimilarity(choices[i], choices[j]) >= 0.9) {
@@ -361,9 +475,10 @@ function validateQuestionsPayload(raw, ctx) {
     const stemNorm = normalizeStem(q.stem);
     if (!stemNorm) errors.push(`${prefix}:empty_stem`);
 
-    const key = termAnswerKey(q.term_canonical, correctChoiceText(q));
-    if (keysInBatch.has(key) || existingTermAnswers.includes(key)) {
+    const key = focusAnswerKey(q);
+    if (keysInBatch.includes(key) || existingTermAnswers.includes(key)) {
       errors.push(`${prefix}:duplicate_term_answer`);
+      errors.push(`${prefix}:duplicate_focus_answer`);
     }
 
     let similar = false;
@@ -379,19 +494,13 @@ function validateQuestionsPayload(raw, ctx) {
     if (qErrors.length === 0) {
       structurallyValid.push(q);
       stemsInBatch.push(stemNorm);
-      keysInBatch.add(key);
+      keysInBatch.push(key);
     }
   });
 
-  if (data.questions.length > maxQ) {
-    errors.push('gt_max_questions');
-  }
-  if (structurallyValid.length < minQ) {
-    errors.push('lt_min_questions');
-  }
-  if (data.shortfall === true) {
-    errors.push('shortfall_true');
-  }
+  if (data.questions.length > maxQ) errors.push('gt_max_questions');
+  if (structurallyValid.length < minQ) errors.push('lt_min_questions');
+  if (data.shortfall === true) errors.push('shortfall_true');
 
   const hardFail = errors.some(
     (e) =>
@@ -403,8 +512,7 @@ function validateQuestionsPayload(raw, ctx) {
       e === 'bad_shortfall',
   );
 
-  // Soft: lt_min / shortfall / per-question → keep validQuestions for partial accept.
-  const soft = new Set(['lt_min_questions', 'shortfall_true', 'gt_max_questions']);
+  const soft = new Set(['lt_min_questions', 'lt_10_questions', 'shortfall_true', 'gt_max_questions']);
   const ok =
     !hardFail &&
     errors.filter((e) => !soft.has(e) && !e.startsWith('q')).length === 0 &&
@@ -427,6 +535,7 @@ module.exports = {
   QUESTIONS_MIN,
   QUESTIONS_MAX,
   STEM_SIMILARITY_THRESHOLD,
+  FOCUS_ANSWER_SIMILARITY_THRESHOLD,
   MAX_LETTER_SHARE,
   validateQuestionsPayload,
   normalizeChoice,
@@ -434,11 +543,15 @@ module.exports = {
   tokenize,
   stemSimilarity,
   termAnswerKey,
+  focusAnswerKey,
+  questionFocus,
   correctChoiceText,
   dedupeQuestions,
+  findParaphrasePairs,
   isCaseOrActionQuestion,
   caseActionShare,
   hashSeed,
   shuffleQuestionChoices,
   finalizeQuestions,
+  normalizeQuestionShape,
 };
