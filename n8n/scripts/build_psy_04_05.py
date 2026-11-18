@@ -933,7 +933,7 @@ const constants = {
   questions_max: 12,
   max_questions_per_subtopic: 12,
   max_letter_share: 0.35,
-  stem_similarity_threshold: 0.72,
+  stem_similarity_threshold: 0.65,
   questions_konspekt_max_chars: 5500,
   questions_transcript_max_chars: 7000,
   questions_thin_min_chars: 400,
@@ -1534,7 +1534,7 @@ if (!p.content.trim()) {
       existingTermAnswers: b.used_term_answers || [],
       minQuestions: C.questions_min || 8,
       maxQuestions: C.questions_max || 12,
-      similarityThreshold: C.stem_similarity_threshold || 0.72,
+      similarityThreshold: C.stem_similarity_threshold || 0.65,
       allowThesis: true,
       thesisOnly: Boolean(b.thesis_mode),
     });
@@ -1574,7 +1574,7 @@ const finOpts = {
   existingTermAnswers: b.used_term_answers || [],
   letterCounts: b.letter_counts || {},
   maxLetterShare: C.max_letter_share || 0.35,
-  similarityThreshold: C.stem_similarity_threshold || 0.72,
+  similarityThreshold: C.stem_similarity_threshold || 0.65,
   seedPrefix: String(b.subtopic_id || b.ordinal || ''),
 };
 const base = {
@@ -1666,7 +1666,7 @@ const fin = packQuestions(merged, maxQ, {
   existingTermAnswers: d.used_term_answers || [],
   letterCounts: d.letter_counts || {},
   maxLetterShare: C.max_letter_share || 0.35,
-  similarityThreshold: C.stem_similarity_threshold || 0.72,
+  similarityThreshold: C.stem_similarity_threshold || 0.65,
   seedPrefix: String(d.subtopic_id || d.ordinal || ''),
 });
 return [{
