@@ -9,7 +9,8 @@
 | `psy_03_transcribe` | в n8n, **inactive**; в git — v3 (`prompt_key`), на инстанс не выкладывать без подтверждения | claim → glossary + `prompt_key` курса → whisper → chunks → job `konspekt` + kick psy_04 |
 | `psy_04_konspekt` | в n8n, **inactive** | claim `konspekt` → DeepSeek (single/map-reduce) → `konspekt_md` → job `terms` + kick psy_05 |
 | `psy_05_terms_questions` | в n8n, **inactive** | claim `terms` → термины/подтемы → MCQ по подтемам (валидация, один добор) → `questions_ready` |
-| `psy_06`…`psy_09` | позже | FSRS, Telegram |
+| `psy_08_telegram_quiz` | в n8n (`jhc2HXbyoMhy6hBA`), активировать только его | Telegram MCQ квиз (@natasha_study_bot): /start /quiz /stop, whitelist `psy.users`, запись `cards`+`reviews` |
+| `psy_06` / `psy_07` / `psy_09` | позже | FSRS morning, reminders |
 
 Подробные контракты (триггеры, credentials по имени, идемпотентность, таблицы, успех/ошибка) — в [n8n/workflows/README.md](../n8n/workflows/README.md).
 
