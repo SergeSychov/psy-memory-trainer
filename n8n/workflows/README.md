@@ -98,3 +98,17 @@ JSON-экспорт и `.id` файлы. Деплой: `python3 n8n/scripts/pull
 Вопросы (цикл `Run — Loop Subtopics`, batch 1): тезисы фрагмента + свои термины + УЖЕ_ИСПОЛЬЗОВАНО (stem и пары термин–ответ из active вопросов лекции) → `gen_questions_v4` → валидатор (8–12, similarity dedupe) → при нехватке **один** retry → `finalizeQuestions` перемешивает `correct_choice` (seed по stem, доля буквы ≤ 35%) → upsert. Лучше меньше уникальных, чем клоны (`shortfall`). Подтема без своих терминов с definition пропускается (`short_questions`).
 
 **Бюджет (оценка v6):** terms + fill_defs + ~8×(questions±retry). Пиковые цены DeepSeek → ориентир **~$0.06–0.12** на лекцию при 8 подтемах; потолок **$0.30**, цель **≤ $0.10**. Рост vs v5: +1 fill-call (~$0.01–0.02), чуть длиннее user (тезисы/used); экономия — нет clone-fallback и меньше бессмысленных retry.
+
+## psy_08_telegram_quiz
+
+| | |
+|---|---|
+| Триггер | `In — Telegram` (`message` + `callback_query`), credential **TelegramStudy** (`@natasha_study_bot`) |
+| Credentials | `TelegramStudy`, `psy Supabase (psy_n8n)` |
+| Логика | `n8n/lib/quiz_session.js` (встраивается при `build_psy_08_telegram_quiz.py`); без LLM |
+| Whitelist | `psy.users.telegram_user_id`; чужим — вежливый отказ, без записи в БД |
+| Команды | `/start`, `/help`, `/quiz` (курс → лекция `status=questions_ready`), `/stop` |
+| Сессия | 10 MCQ; приоритет неотвеченных; A–D inline; «Дальше»; итог X/10 + подтемы с ошибками |
+| Пишет | `psy.quiz_sessions`, `psy.cards` (в т.ч. `term_id` NULL для thesis), `psy.reviews` (`rating` 3/1, `response_ms`, `session_id`) |
+| Зависимость | миграция `0006_quiz_sessions.sql` |
+| Активация | только этот workflow; перед activate — `getWebhookInfo` бота (не должен указывать на чужой webhook) |
