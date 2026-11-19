@@ -53,6 +53,7 @@ CREATE INDEX IF NOT EXISTS quiz_sessions_user_id_created_at_idx
 COMMENT ON TABLE psy.quiz_sessions IS
     'Telegram MCQ quiz state. At most one open session per user (partial unique index).';
 
+DROP TRIGGER IF EXISTS quiz_sessions_set_updated_at ON psy.quiz_sessions;
 CREATE TRIGGER quiz_sessions_set_updated_at
     BEFORE UPDATE ON psy.quiz_sessions
     FOR EACH ROW

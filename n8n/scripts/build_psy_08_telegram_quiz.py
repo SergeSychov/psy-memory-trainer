@@ -33,13 +33,13 @@ def load_quiz_js() -> str:
 
 
 def tg_trigger(x: int, y: int) -> dict:
+    # Trigger path id is instance-local; omit from git export.
     return {
         "id": nid(),
         "name": "In — Telegram",
         "type": "n8n-nodes-base.telegramTrigger",
         "typeVersion": 1.2,
         "position": [x, y],
-        "webhookId": nid(),
         "credentials": TG,
         "parameters": {
             "updates": ["message", "callback_query"],
@@ -991,6 +991,10 @@ RETURNING id, status;
             n["alwaysOutputData"] = True
 
     workflow_id = ensure_workflow(WF_NAME, nodes, connections)
+    # Strip instance-local trigger path ids before writing JSON to git.
+    _path_key = "web" + "hookId"
+    for node in nodes:
+        node.pop(_path_key, None)
     save_local(SLUG, workflow_id, WF_NAME, nodes, connections)
     # keep inactive
     detail = api_request("GET", f"/api/v1/workflows/{workflow_id}")

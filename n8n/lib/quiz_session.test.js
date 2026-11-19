@@ -126,9 +126,9 @@ test('lectureLabel uses drive folder_path', () => {
   assert.equal(
     lectureLabel({
       title: 'audio_16k.opus',
-      source_meta: { drive: { folder_path: ['2026-10-27 Лекция 1'] } },
+      source_meta: { drive: { folder_path: ['2026-01-01 Лекция тест'] } },
     }),
-    '2026-10-27 Лекция 1',
+    '2026-01-01 Лекция тест',
   );
 });
 
