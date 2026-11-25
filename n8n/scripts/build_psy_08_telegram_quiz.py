@@ -98,6 +98,17 @@ def _rows_from_kb(item_expr: str, n_rows: int, cols: int = 1) -> dict:
     return {"rows": rows}
 
 
+def _rows_paged(item_expr: str, item_rows: int, nav_cols: int = 2) -> dict:
+    """item_rows × 1 button, then one nav row with nav_cols buttons (Назад/Ещё)."""
+    rows = []
+    for r in range(item_rows):
+        rows.append({"row": {"buttons": [_btn(item_expr, r, 0)]}})
+    rows.append(
+        {"row": {"buttons": [_btn(item_expr, item_rows, c) for c in range(nav_cols)]}}
+    )
+    return {"rows": rows}
+
+
 def tg_send_markup(
     name: str,
     x: int,
@@ -106,12 +117,18 @@ def tg_send_markup(
     item_expr: str,
     n_rows: int,
     cols: int = 1,
+    paged: bool = False,
 ) -> dict:
     """sendMessage with inline keyboard via per-button expressions.
 
     n8n ignores a dynamic object in ``inlineKeyboard``; each text/callback_data
-    field must be its own expression. Caller pads/truncates keyboard to n_rows.
+    field must be its own expression. paged=True → n_rows item rows + 1 nav row.
     """
+    inline = (
+        _rows_paged(item_expr, n_rows, nav_cols=2)
+        if paged
+        else _rows_from_kb(item_expr, n_rows, cols)
+    )
     return {
         "id": nid(),
         "name": name,
@@ -129,7 +146,7 @@ def tg_send_markup(
                 "parse_mode": "HTML",
             },
             "replyMarkup": "inlineKeyboard",
-            "inlineKeyboard": _rows_from_kb(item_expr, n_rows, cols),
+            "inlineKeyboard": inline,
         },
         "onError": "continueRegularOutput",
     }
@@ -308,7 +325,7 @@ if (norm.command === '/quiz') {{
   if (hasOpen && (session.status === 'active' || session.status === 'awaiting_next')) {{
     return reply('busy', 'У вас уже есть активная сессия. Завершите её или отправьте /stop.');
   }}
-  return reply('pick_course', 'Выберите курс:');
+  return reply('pick_course', 'Выберите курс:', {{ course_offset: 0 }});
 }}
 
 if (norm.update_type === 'callback') {{
@@ -316,8 +333,23 @@ if (norm.update_type === 'callback') {{
     return reply('noop', '');
   }}
   const cb = parseCallback(norm.callback_data);
+  if (cb.kind === 'noop') {{
+    return reply('noop', '');
+  }}
+  if (cb.kind === 'page_courses') {{
+    return reply('pick_course', 'Выберите курс:', {{ course_offset: cb.offset }});
+  }}
+  if (cb.kind === 'page_lectures') {{
+    return reply('pick_lecture', 'Выберите лекцию:', {{
+      course_id: cb.courseId,
+      lecture_offset: cb.offset,
+    }});
+  }}
   if (cb.kind === 'course') {{
-    return reply('pick_lecture', 'Выберите лекцию:', {{ course_id: cb.courseId }});
+    return reply('pick_lecture', 'Выберите лекцию:', {{
+      course_id: cb.courseId,
+      lecture_offset: 0,
+    }});
   }}
   if (cb.kind === 'lecture') {{
     if (hasOpen && (session.status === 'active' || session.status === 'awaiting_next')) {{
@@ -351,29 +383,28 @@ return reply('help',
 """
 
 
-# n8n Telegram inlineKeyboard needs a fixed row count with per-field expressions.
-COURSE_KB_ROWS = 2
-LECTURE_KB_ROWS = 4
+# Fixed Telegram rows: pageSize item rows + 1 nav row (Назад/Ещё). Must match quiz_session.js.
+COURSE_PAGE_SIZE = 2
+LECTURE_PAGE_SIZE = 4
 
 
 def format_courses_js(quiz_lib: str) -> str:
     return f"""
 {quiz_lib}
 const base = $('Run — Route').first().json;
-const courses = items.map((i) => i.json).filter((r) => r.id).slice(0, {COURSE_KB_ROWS});
+const courses = items.map((i) => i.json).filter((r) => r.id);
 if (!courses.length) {{
   return [{{ json: {{ ...base, action: 'reply', out_text: 'Нет доступных курсов', keyboard: null, kb_rows: 0 }} }}];
 }}
-const keyboard = coursesKeyboard(courses);
-while (keyboard.inline_keyboard.length < {COURSE_KB_ROWS}) {{
-  keyboard.inline_keyboard.push([{{ text: '·', callback_data: 'noop' }}]);
-}}
+const built = buildCoursesPage(courses, base.course_offset || 0);
 return [{{ json: {{
   ...base,
   action: 'reply',
-  out_text: 'Выберите курс:',
-  keyboard,
-  kb_rows: courses.length,
+  out_text: built.out_text,
+  keyboard: built.keyboard,
+  kb_rows: built.kb_rows,
+  list_total: built.total,
+  list_offset: built.offset,
 }} }}];
 """
 
@@ -382,20 +413,19 @@ def format_lectures_js(quiz_lib: str) -> str:
     return f"""
 {quiz_lib}
 const base = $('Run — Route').first().json;
-const lectures = items.map((i) => i.json).filter((r) => r.id).slice(0, {LECTURE_KB_ROWS});
+const lectures = items.map((i) => i.json).filter((r) => r.id);
 if (!lectures.length) {{
   return [{{ json: {{ ...base, action: 'reply', out_text: 'В этом курсе нет лекций с готовыми вопросами.', keyboard: null, kb_rows: 0 }} }}];
 }}
-const keyboard = lecturesKeyboard(lectures);
-while (keyboard.inline_keyboard.length < {LECTURE_KB_ROWS}) {{
-  keyboard.inline_keyboard.push([{{ text: '·', callback_data: 'noop' }}]);
-}}
+const built = buildLecturesPage(lectures, base.lecture_offset || 0, base.course_id);
 return [{{ json: {{
   ...base,
   action: 'reply',
-  out_text: 'Выберите лекцию:',
-  keyboard,
-  kb_rows: lectures.length,
+  out_text: built.out_text,
+  keyboard: built.keyboard,
+  kb_rows: built.kb_rows,
+  list_total: built.total,
+  list_offset: built.offset,
 }} }}];
 """
 
@@ -713,8 +743,8 @@ ORDER BY c.title;
             1760,
             1000,
             item_expr="$json",
-            n_rows=COURSE_KB_ROWS,
-            cols=1,
+            n_rows=COURSE_PAGE_SIZE,
+            paged=True,
         )
     )
     nodes.append(tg_ack("Ack — Courses", 1760, 1120))
@@ -767,8 +797,8 @@ ORDER BY COALESCE(l.source_meta #>> '{drive,folder_path,0}', l.title, l.id::text
             1760,
             1240,
             item_expr="$json",
-            n_rows=LECTURE_KB_ROWS,
-            cols=1,
+            n_rows=LECTURE_PAGE_SIZE,
+            paged=True,
         )
     )
     nodes.append(tg_ack("Ack — Lectures", 1760, 1360))
