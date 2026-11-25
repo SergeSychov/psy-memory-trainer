@@ -2,7 +2,7 @@
   "name": "psy_08_telegram_quiz",
   "nodes": [
     {
-      "id": "86a8167e-b334-434c-a92f-fbd472cc1387",
+      "id": "f8d16d65-3d54-4f34-98c1-6467167b0c62",
       "name": "NOTE — Quiz",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
@@ -18,7 +18,7 @@
       }
     },
     {
-      "id": "2b3a5074-99f2-4a9d-9899-6bf6e88c17ea",
+      "id": "3747ca8a-1b39-4297-9430-b4982759c02e",
       "name": "In — Telegram",
       "type": "n8n-nodes-base.telegramTrigger",
       "typeVersion": 1.2,
@@ -41,7 +41,7 @@
       }
     },
     {
-      "id": "c84812a3-ccd3-4b9b-a34f-d28b61308cb4",
+      "id": "efac1c1d-865f-45ba-a789-a4a60d3ef889",
       "name": "Run — Normalize",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -54,7 +54,7 @@
       }
     },
     {
-      "id": "44586c6d-853c-44b2-bd4c-7094d7c123c2",
+      "id": "29fd2c2f-387a-483b-a75c-72262115fa51",
       "name": "Load — User Session",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -77,7 +77,7 @@
       }
     },
     {
-      "id": "17f2acd3-8dfb-46fd-a476-13b9be9bccc7",
+      "id": "62db0576-0c9a-4661-b987-3c8ca5c1fbb2",
       "name": "Run — Route",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -90,7 +90,7 @@
       }
     },
     {
-      "id": "5f26a6d3-e25c-4c6b-af4f-a0843a6edeb4",
+      "id": "18fa4c2d-8ef7-4fed-a5ff-918ae1a12bf8",
       "name": "Run — Switch Action",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.2,
@@ -110,7 +110,7 @@
                 },
                 "conditions": [
                   {
-                    "id": "53dcb72a-e599-4949-9a8c-17441ec5fae6",
+                    "id": "e4f7d9f0-f21d-4a83-805f-b8f951c0fb99",
                     "leftValue": "={{ $json.action }}",
                     "rightValue": "pending_reg",
                     "operator": {
@@ -133,7 +133,7 @@
                 },
                 "conditions": [
                   {
-                    "id": "4afed29f-75ca-4c97-b136-efffda6ab2aa",
+                    "id": "0c70c907-0b85-4004-8084-a8614ae44e76",
                     "leftValue": "={{ $json.action }}",
                     "rightValue": "refuse",
                     "operator": {
@@ -156,7 +156,7 @@
                 },
                 "conditions": [
                   {
-                    "id": "61d2d300-d6c8-4060-ad5b-e377bd851ded",
+                    "id": "0e47eaa8-c5a2-4d8f-a06e-5629d5b925ef",
                     "leftValue": "={{ $json.action }}",
                     "rightValue": "welcome",
                     "operator": {
@@ -179,7 +179,7 @@
                 },
                 "conditions": [
                   {
-                    "id": "a942410d-95a3-453c-8291-757e208094b4",
+                    "id": "c80f22e3-dbd7-4c5a-926f-7f64b96efeb5",
                     "leftValue": "={{ $json.action }}",
                     "rightValue": "help",
                     "operator": {
@@ -202,7 +202,7 @@
                 },
                 "conditions": [
                   {
-                    "id": "57bcc66a-5664-44cc-9cad-63054c05cb8f",
+                    "id": "eb9fedf8-7dac-4e95-be6f-930266a7f9c2",
                     "leftValue": "={{ $json.action }}",
                     "rightValue": "busy",
                     "operator": {
@@ -225,7 +225,7 @@
                 },
                 "conditions": [
                   {
-                    "id": "0ee17e08-0c01-4fc1-95c9-7fb4b6326032",
+                    "id": "5b67b97e-1f2f-4f52-8440-a7cf0bee2d78",
                     "leftValue": "={{ $json.action }}",
                     "rightValue": "stop",
                     "operator": {
@@ -248,7 +248,7 @@
                 },
                 "conditions": [
                   {
-                    "id": "54a29433-ea42-46f6-b8ba-5c1e772983d1",
+                    "id": "1a5351da-b1d4-4bef-92a5-dd6f926a1092",
                     "leftValue": "={{ $json.action }}",
                     "rightValue": "stop_idle",
                     "operator": {
@@ -271,7 +271,7 @@
                 },
                 "conditions": [
                   {
-                    "id": "eef1e3ee-3413-42fe-ba73-d0ffa02c038f",
+                    "id": "4cbc7cb5-3f94-4c4c-b65f-02447b7dd00a",
                     "leftValue": "={{ $json.action }}",
                     "rightValue": "pick_course",
                     "operator": {
@@ -294,7 +294,7 @@
                 },
                 "conditions": [
                   {
-                    "id": "875207cd-84ed-4f6d-9492-f19b8b3281af",
+                    "id": "47a481e5-5e10-4878-84ce-5ac9f0d6e0e9",
                     "leftValue": "={{ $json.action }}",
                     "rightValue": "pick_lecture",
                     "operator": {
@@ -317,7 +317,7 @@
                 },
                 "conditions": [
                   {
-                    "id": "7112df3f-0253-477b-8575-6a150a8a62d8",
+                    "id": "ab8c2173-a074-4862-bd80-589b27e4007f",
                     "leftValue": "={{ $json.action }}",
                     "rightValue": "start_quiz",
                     "operator": {
@@ -340,7 +340,7 @@
                 },
                 "conditions": [
                   {
-                    "id": "b6eeb0b3-e98f-4e16-b121-34dacfbe5dda",
+                    "id": "9597b21c-3fd0-49f1-a3b7-9530909926dc",
                     "leftValue": "={{ $json.action }}",
                     "rightValue": "answer",
                     "operator": {
@@ -363,7 +363,7 @@
                 },
                 "conditions": [
                   {
-                    "id": "49f47b37-51fd-4021-bf59-9f17e3db1820",
+                    "id": "7934865a-e4ca-4bb1-852a-300013bf2025",
                     "leftValue": "={{ $json.action }}",
                     "rightValue": "next",
                     "operator": {
@@ -386,7 +386,7 @@
                 },
                 "conditions": [
                   {
-                    "id": "4cc37a9b-01b8-4467-a968-6fd425f366c2",
+                    "id": "c1dc8afd-6444-4d8d-be85-8369833c0aa7",
                     "leftValue": "={{ $json.action }}",
                     "rightValue": "stale",
                     "operator": {
@@ -409,7 +409,7 @@
                 },
                 "conditions": [
                   {
-                    "id": "ab3fc58b-b3e4-497f-b6d7-688005b25999",
+                    "id": "8ea5cbf1-3d0d-4271-b95f-3d0dc2e0b87e",
                     "leftValue": "={{ $json.action }}",
                     "rightValue": "noop",
                     "operator": {
@@ -431,7 +431,7 @@
       }
     },
     {
-      "id": "b073496f-c48b-4955-8908-60693d429676",
+      "id": "19f93349-84b8-4bc7-9c10-8fdbf32b44ea",
       "name": "Out — pending_reg",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
@@ -459,7 +459,7 @@
       "onError": "continueRegularOutput"
     },
     {
-      "id": "34a73c83-f1ae-45b9-bac6-72be2518e6f7",
+      "id": "21c0d46c-f35f-420c-a05e-8ea0e4eb412c",
       "name": "Out — refuse",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
@@ -487,7 +487,7 @@
       "onError": "continueRegularOutput"
     },
     {
-      "id": "98247778-8c6f-4d6f-a529-e6ffd3ab7230",
+      "id": "7b970468-3669-43bf-96bd-3d703f0b5942",
       "name": "Out — welcome",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
@@ -515,7 +515,7 @@
       "onError": "continueRegularOutput"
     },
     {
-      "id": "d4892184-f1aa-4994-b824-83e0b6957245",
+      "id": "bb5ffd6e-8181-48e2-b231-5fed4145d389",
       "name": "Out — help",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
@@ -543,7 +543,7 @@
       "onError": "continueRegularOutput"
     },
     {
-      "id": "84513b6a-9e23-4647-9b77-684cb76fdbc0",
+      "id": "da573a1b-1c36-4f3b-9682-44f1f85ad3b5",
       "name": "Out — busy",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
@@ -571,7 +571,7 @@
       "onError": "continueRegularOutput"
     },
     {
-      "id": "2eaa582a-4057-4511-b0f3-1faad3a8842d",
+      "id": "c3e57688-da0d-4f5a-acbe-3c9cead64318",
       "name": "Out — stop_idle",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
@@ -599,7 +599,7 @@
       "onError": "continueRegularOutput"
     },
     {
-      "id": "52893ab2-fb19-4908-a1d2-bd808b9ab1c3",
+      "id": "cb4242df-d941-4f3a-b75e-2f551fe3cf03",
       "name": "DB — Stop Session",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -622,7 +622,7 @@
       }
     },
     {
-      "id": "57cd3765-1ba6-40ea-94f7-9222b91438da",
+      "id": "7143e29b-7222-4939-9742-2311f7694e6e",
       "name": "Out — stop",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
@@ -650,7 +650,7 @@
       "onError": "continueRegularOutput"
     },
     {
-      "id": "45d60ee0-b1b3-46e9-a005-4dd91696cc2b",
+      "id": "44b50282-c202-4e33-8812-b6b7be7aaae7",
       "name": "Load — Courses",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -672,7 +672,7 @@
       "alwaysOutputData": true
     },
     {
-      "id": "b17f59b4-ff04-42a5-a53d-fa2b8b5cf513",
+      "id": "af8c19b6-cadd-4c91-bf96-4ebb1e604bdf",
       "name": "Run — Format Courses",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -681,14 +681,73 @@
         1000
       ],
       "parameters": {
-        "jsCode": "\n/**\n * Telegram quiz helpers for psy_08.\n * Pure functions — embedded into n8n Code nodes and covered by node:test.\n */\n\nconst QUIZ_SIZE = 10;\nconst CHOICES = ['A', 'B', 'C', 'D'];\n\nfunction hashSeed(str) {\n  let h = 2166136261;\n  const s = String(str || '');\n  for (let i = 0; i < s.length; i += 1) {\n    h ^= s.charCodeAt(i);\n    h = Math.imul(h, 16777619);\n  }\n  return h >>> 0;\n}\n\nfunction mulberry32(seed) {\n  let a = seed >>> 0;\n  return function rng() {\n    a = (a + 0x6d2b79f5) >>> 0;\n    let t = a;\n    t = Math.imul(t ^ (t >>> 15), t | 1);\n    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);\n    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;\n  };\n}\n\nfunction shuffle(arr, rng) {\n  const out = arr.slice();\n  for (let i = out.length - 1; i > 0; i -= 1) {\n    const j = Math.floor(rng() * (i + 1));\n    const tmp = out[i];\n    out[i] = out[j];\n    out[j] = tmp;\n  }\n  return out;\n}\n\nfunction lectureLabel(row) {\n  const meta = row && row.source_meta;\n  let folderPath = null;\n  if (meta && typeof meta === 'object') {\n    folderPath = meta.drive && meta.drive.folder_path;\n  } else if (typeof meta === 'string' && meta.trim()) {\n    try {\n      const parsed = JSON.parse(meta);\n      folderPath = parsed.drive && parsed.drive.folder_path;\n    } catch (_e) {\n      folderPath = null;\n    }\n  }\n  if (Array.isArray(folderPath) && folderPath.length) {\n    return String(folderPath[folderPath.length - 1]);\n  }\n  if (row && row.title && String(row.title).trim() && String(row.title) !== 'audio_16k.opus') {\n    return String(row.title).trim();\n  }\n  return 'Лекция';\n}\n\n/**\n * Prefer unanswered questions, diversify by subtopic, fill to limit.\n * @param {Array<object>} candidates\n * @param {{limit?: number, seed?: string|number}} [opts]\n */\nfunction selectQuizQuestions(candidates, opts = {}) {\n  const limit = opts.limit == null ? QUIZ_SIZE : Number(opts.limit);\n  const rng = mulberry32(hashSeed(opts.seed == null ? String(Date.now()) : opts.seed));\n  const list = Array.isArray(candidates) ? candidates : [];\n  const unanswered = list.filter((q) => !q.answered_before);\n  const answered = list.filter((q) => q.answered_before);\n\n  function diversify(pool) {\n    const bySub = new Map();\n    for (const q of shuffle(pool, rng)) {\n      const key = String(q.subtopic_id || q.id);\n      if (!bySub.has(key)) bySub.set(key, []);\n      bySub.get(key).push(q);\n    }\n    const keys = shuffle([...bySub.keys()], rng);\n    const out = [];\n    let progressed = true;\n    while (out.length < limit && progressed) {\n      progressed = false;\n      for (const key of keys) {\n        const bucket = bySub.get(key);\n        if (bucket && bucket.length) {\n          out.push(bucket.shift());\n          progressed = true;\n          if (out.length >= limit) break;\n        }\n      }\n    }\n    return out;\n  }\n\n  let selected = diversify(unanswered);\n  if (selected.length < limit) {\n    const used = new Set(selected.map((q) => String(q.id)));\n    const fill = diversify(answered.filter((q) => !used.has(String(q.id))));\n    selected = selected.concat(fill).slice(0, limit);\n  }\n  return selected.slice(0, limit);\n}\n\nfunction escapeHtml(text) {\n  return String(text == null ? '' : text)\n    .replace(/&/g, '&amp;')\n    .replace(/</g, '&lt;')\n    .replace(/>/g, '&gt;');\n}\n\nfunction choiceText(question, letter) {\n  const key = `choice_${String(letter).toLowerCase()}`;\n  return question[key] || '';\n}\n\nfunction formatQuestionMessage(question, index, total) {\n  const n = index + 1;\n  const lines = [\n    `<b>Вопрос ${n} из ${total}</b>`,\n    '',\n    escapeHtml(question.stem),\n    '',\n    `<b>A.</b> ${escapeHtml(choiceText(question, 'A'))}`,\n    `<b>B.</b> ${escapeHtml(choiceText(question, 'B'))}`,\n    `<b>C.</b> ${escapeHtml(choiceText(question, 'C'))}`,\n    `<b>D.</b> ${escapeHtml(choiceText(question, 'D'))}`,\n  ];\n  return lines.join('\\n');\n}\n\n/** Telegram Bot API reply_markup shape (not n8n Telegram-node fixedCollection). */\nfunction inlineKeyboardRows(buttonsRows) {\n  return {\n    inline_keyboard: (buttonsRows || []).map((row) =>\n      (row || []).map((btn) => ({\n        text: String(btn.text || ''),\n        callback_data: String(btn.callback_data || ''),\n      })),\n    ),\n  };\n}\n\nfunction choiceKeyboard(sessionId) {\n  return inlineKeyboardRows([\n    CHOICES.map((letter) => ({\n      text: letter,\n      callback_data: `ans:${sessionId}:${letter}`,\n    })),\n  ]);\n}\n\nfunction nextKeyboard(sessionId) {\n  return inlineKeyboardRows([[{ text: 'Дальше', callback_data: `next:${sessionId}` }]]);\n}\n\nfunction coursesKeyboard(courses) {\n  return inlineKeyboardRows(\n    (courses || []).map((c) => [\n      {\n        text: String(c.title || 'Курс').slice(0, 60),\n        callback_data: `course:${c.id}`,\n      },\n    ]),\n  );\n}\n\nfunction lecturesKeyboard(lectures) {\n  return inlineKeyboardRows(\n    (lectures || []).map((l) => [\n      {\n        text: lectureLabel(l).slice(0, 60),\n        callback_data: `lecture:${l.id}`,\n      },\n    ]),\n  );\n}\n\nfunction explanationFor(question, chosen) {\n  const map = question.choice_explanations;\n  if (map && typeof map === 'object') {\n    const fromChoice = map[chosen] || map[String(chosen).toLowerCase()];\n    if (fromChoice) return String(fromChoice);\n  }\n  if (question.explanation) return String(question.explanation);\n  return '';\n}\n\nfunction anchorLine(question) {\n  if (question.source_kind === 'term') {\n    const term = question.term_canonical || 'термин';\n    const def = question.term_definition || '';\n    if (def) {\n      return `Термин: <b>${escapeHtml(term)}</b> — ${escapeHtml(def)}`;\n    }\n    return `Термин: <b>${escapeHtml(term)}</b>`;\n  }\n  const thesis = question.thesis || '';\n  if (thesis) {\n    return `Тезис: ${escapeHtml(thesis)}`;\n  }\n  return '';\n}\n\nfunction formatFeedback({ correct, chosen, question }) {\n  const right = String(question.correct_choice || '').toUpperCase();\n  const pick = String(chosen || '').toUpperCase();\n  const expl = explanationFor(question, pick);\n  const lines = [];\n  if (correct) {\n    lines.push('<b>Верно</b>');\n  } else {\n    lines.push('<b>Неверно</b>');\n    lines.push(`Правильный вариант: <b>${escapeHtml(right)}</b>. ${escapeHtml(choiceText(question, right))}`);\n  }\n  if (expl) {\n    lines.push('');\n    lines.push(escapeHtml(expl));\n  }\n  const anchor = anchorLine(question);\n  if (anchor) {\n    lines.push('');\n    lines.push(anchor);\n  }\n  return lines.join('\\n');\n}\n\nfunction formatSummary({ correctCount, total, missSubtopics }) {\n  const lines = [`<b>Итог: ${correctCount}/${total}</b>`];\n  const misses = (missSubtopics || []).filter(Boolean);\n  if (misses.length) {\n    lines.push('');\n    lines.push('Подтемы с ошибками:');\n    for (const title of misses) {\n      lines.push(`• ${escapeHtml(title)}`);\n    }\n  } else {\n    lines.push('');\n    lines.push('Ошибок по подтемам нет — отличная сессия.');\n  }\n  lines.push('');\n  lines.push('Новая сессия: /quiz');\n  return lines.join('\\n');\n}\n\nfunction ratingForAnswer(correct) {\n  return correct ? 3 : 1;\n}\n\nfunction computeResponseMs(askedAt, now) {\n  if (!askedAt) return null;\n  const start = new Date(askedAt).getTime();\n  const end = now ? new Date(now).getTime() : Date.now();\n  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;\n  return Math.max(0, Math.round(end - start));\n}\n\nfunction parseCallback(data) {\n  const raw = String(data || '');\n  if (raw.startsWith('course:')) {\n    return { kind: 'course', courseId: raw.slice(7) };\n  }\n  if (raw.startsWith('lecture:')) {\n    return { kind: 'lecture', lectureId: raw.slice(8) };\n  }\n  if (raw.startsWith('ans:')) {\n    const parts = raw.split(':');\n    if (parts.length !== 3) return { kind: 'unknown', raw };\n    return {\n      kind: 'answer',\n      sessionId: parts[1],\n      choice: String(parts[2] || '').toUpperCase(),\n    };\n  }\n  if (raw.startsWith('next:')) {\n    return { kind: 'next', sessionId: raw.slice(5) };\n  }\n  return { kind: 'unknown', raw };\n}\n\nfunction uniquePreserve(list) {\n  const out = [];\n  const seen = new Set();\n  for (const item of list || []) {\n    const key = String(item);\n    if (!key || seen.has(key)) continue;\n    seen.add(key);\n    out.push(item);\n  }\n  return out;\n}\n\nfunction tallyAnswer({ session, correct, subtopicTitle }) {\n  const correctCount = Number(session.correct_count || 0) + (correct ? 1 : 0);\n  const answeredCount = Number(session.answered_count || 0) + 1;\n  const miss = uniquePreserve(\n    correct ? session.miss_subtopics || [] : [...(session.miss_subtopics || []), subtopicTitle].filter(Boolean),\n  );\n  return { correctCount, answeredCount, missSubtopics: miss };\n}\nconst base = $('Run — Route').first().json;\nconst courses = items.map((i) => i.json).filter((r) => r.id);\nif (!courses.length) {\n  return [{ json: { ...base, action: 'reply', out_text: 'Нет доступных курсов', keyboard: null } }];\n}\nreturn [{ json: {\n  ...base,\n  action: 'reply',\n  out_text: 'Выберите курс:',\n  keyboard: coursesKeyboard(courses),\n} }];\n"
+        "jsCode": "\n/**\n * Telegram quiz helpers for psy_08.\n * Pure functions — embedded into n8n Code nodes and covered by node:test.\n */\n\nconst QUIZ_SIZE = 10;\nconst CHOICES = ['A', 'B', 'C', 'D'];\n\nfunction hashSeed(str) {\n  let h = 2166136261;\n  const s = String(str || '');\n  for (let i = 0; i < s.length; i += 1) {\n    h ^= s.charCodeAt(i);\n    h = Math.imul(h, 16777619);\n  }\n  return h >>> 0;\n}\n\nfunction mulberry32(seed) {\n  let a = seed >>> 0;\n  return function rng() {\n    a = (a + 0x6d2b79f5) >>> 0;\n    let t = a;\n    t = Math.imul(t ^ (t >>> 15), t | 1);\n    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);\n    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;\n  };\n}\n\nfunction shuffle(arr, rng) {\n  const out = arr.slice();\n  for (let i = out.length - 1; i > 0; i -= 1) {\n    const j = Math.floor(rng() * (i + 1));\n    const tmp = out[i];\n    out[i] = out[j];\n    out[j] = tmp;\n  }\n  return out;\n}\n\nfunction lectureLabel(row) {\n  const meta = row && row.source_meta;\n  let folderPath = null;\n  if (meta && typeof meta === 'object') {\n    folderPath = meta.drive && meta.drive.folder_path;\n  } else if (typeof meta === 'string' && meta.trim()) {\n    try {\n      const parsed = JSON.parse(meta);\n      folderPath = parsed.drive && parsed.drive.folder_path;\n    } catch (_e) {\n      folderPath = null;\n    }\n  }\n  if (Array.isArray(folderPath) && folderPath.length) {\n    return String(folderPath[folderPath.length - 1]);\n  }\n  if (row && row.title && String(row.title).trim() && String(row.title) !== 'audio_16k.opus') {\n    return String(row.title).trim();\n  }\n  return 'Лекция';\n}\n\n/**\n * Prefer unanswered questions, diversify by subtopic, fill to limit.\n * @param {Array<object>} candidates\n * @param {{limit?: number, seed?: string|number}} [opts]\n */\nfunction selectQuizQuestions(candidates, opts = {}) {\n  const limit = opts.limit == null ? QUIZ_SIZE : Number(opts.limit);\n  const rng = mulberry32(hashSeed(opts.seed == null ? String(Date.now()) : opts.seed));\n  const list = Array.isArray(candidates) ? candidates : [];\n  const unanswered = list.filter((q) => !q.answered_before);\n  const answered = list.filter((q) => q.answered_before);\n\n  function diversify(pool) {\n    const bySub = new Map();\n    for (const q of shuffle(pool, rng)) {\n      const key = String(q.subtopic_id || q.id);\n      if (!bySub.has(key)) bySub.set(key, []);\n      bySub.get(key).push(q);\n    }\n    const keys = shuffle([...bySub.keys()], rng);\n    const out = [];\n    let progressed = true;\n    while (out.length < limit && progressed) {\n      progressed = false;\n      for (const key of keys) {\n        const bucket = bySub.get(key);\n        if (bucket && bucket.length) {\n          out.push(bucket.shift());\n          progressed = true;\n          if (out.length >= limit) break;\n        }\n      }\n    }\n    return out;\n  }\n\n  let selected = diversify(unanswered);\n  if (selected.length < limit) {\n    const used = new Set(selected.map((q) => String(q.id)));\n    const fill = diversify(answered.filter((q) => !used.has(String(q.id))));\n    selected = selected.concat(fill).slice(0, limit);\n  }\n  return selected.slice(0, limit);\n}\n\nfunction escapeHtml(text) {\n  return String(text == null ? '' : text)\n    .replace(/&/g, '&amp;')\n    .replace(/</g, '&lt;')\n    .replace(/>/g, '&gt;');\n}\n\nfunction choiceText(question, letter) {\n  const key = `choice_${String(letter).toLowerCase()}`;\n  return question[key] || '';\n}\n\nfunction formatQuestionMessage(question, index, total) {\n  const n = index + 1;\n  const lines = [\n    `<b>Вопрос ${n} из ${total}</b>`,\n    '',\n    escapeHtml(question.stem),\n    '',\n    `<b>A.</b> ${escapeHtml(choiceText(question, 'A'))}`,\n    `<b>B.</b> ${escapeHtml(choiceText(question, 'B'))}`,\n    `<b>C.</b> ${escapeHtml(choiceText(question, 'C'))}`,\n    `<b>D.</b> ${escapeHtml(choiceText(question, 'D'))}`,\n  ];\n  return lines.join('\\n');\n}\n\n/** Telegram Bot API reply_markup shape (not n8n Telegram-node fixedCollection). */\nfunction inlineKeyboardRows(buttonsRows) {\n  return {\n    inline_keyboard: (buttonsRows || []).map((row) =>\n      (row || []).map((btn) => ({\n        text: String(btn.text || ''),\n        callback_data: String(btn.callback_data || ''),\n      })),\n    ),\n  };\n}\n\nfunction choiceKeyboard(sessionId) {\n  return inlineKeyboardRows([\n    CHOICES.map((letter) => ({\n      text: letter,\n      callback_data: `ans:${sessionId}:${letter}`,\n    })),\n  ]);\n}\n\nfunction nextKeyboard(sessionId) {\n  return inlineKeyboardRows([[{ text: 'Дальше', callback_data: `next:${sessionId}` }]]);\n}\n\nfunction coursesKeyboard(courses) {\n  return inlineKeyboardRows(\n    (courses || []).map((c) => [\n      {\n        text: String(c.title || 'Курс').slice(0, 60),\n        callback_data: `course:${c.id}`,\n      },\n    ]),\n  );\n}\n\nfunction lecturesKeyboard(lectures) {\n  return inlineKeyboardRows(\n    (lectures || []).map((l) => [\n      {\n        text: lectureLabel(l).slice(0, 60),\n        callback_data: `lecture:${l.id}`,\n      },\n    ]),\n  );\n}\n\nfunction explanationFor(question, chosen) {\n  const map = question.choice_explanations;\n  if (map && typeof map === 'object') {\n    const fromChoice = map[chosen] || map[String(chosen).toLowerCase()];\n    if (fromChoice) return String(fromChoice);\n  }\n  if (question.explanation) return String(question.explanation);\n  return '';\n}\n\nfunction anchorLine(question) {\n  if (question.source_kind === 'term') {\n    const term = question.term_canonical || 'термин';\n    const def = question.term_definition || '';\n    if (def) {\n      return `Термин: <b>${escapeHtml(term)}</b> — ${escapeHtml(def)}`;\n    }\n    return `Термин: <b>${escapeHtml(term)}</b>`;\n  }\n  const thesis = question.thesis || '';\n  if (thesis) {\n    return `Тезис: ${escapeHtml(thesis)}`;\n  }\n  return '';\n}\n\nfunction formatFeedback({ correct, chosen, question }) {\n  const right = String(question.correct_choice || '').toUpperCase();\n  const pick = String(chosen || '').toUpperCase();\n  const expl = explanationFor(question, pick);\n  const lines = [];\n  if (correct) {\n    lines.push('<b>Верно</b>');\n  } else {\n    lines.push('<b>Неверно</b>');\n    lines.push(`Правильный вариант: <b>${escapeHtml(right)}</b>. ${escapeHtml(choiceText(question, right))}`);\n  }\n  if (expl) {\n    lines.push('');\n    lines.push(escapeHtml(expl));\n  }\n  const anchor = anchorLine(question);\n  if (anchor) {\n    lines.push('');\n    lines.push(anchor);\n  }\n  return lines.join('\\n');\n}\n\nfunction formatSummary({ correctCount, total, missSubtopics }) {\n  const lines = [`<b>Итог: ${correctCount}/${total}</b>`];\n  const misses = (missSubtopics || []).filter(Boolean);\n  if (misses.length) {\n    lines.push('');\n    lines.push('Подтемы с ошибками:');\n    for (const title of misses) {\n      lines.push(`• ${escapeHtml(title)}`);\n    }\n  } else {\n    lines.push('');\n    lines.push('Ошибок по подтемам нет — отличная сессия.');\n  }\n  lines.push('');\n  lines.push('Новая сессия: /quiz');\n  return lines.join('\\n');\n}\n\nfunction ratingForAnswer(correct) {\n  return correct ? 3 : 1;\n}\n\nfunction computeResponseMs(askedAt, now) {\n  if (!askedAt) return null;\n  const start = new Date(askedAt).getTime();\n  const end = now ? new Date(now).getTime() : Date.now();\n  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;\n  return Math.max(0, Math.round(end - start));\n}\n\nfunction parseCallback(data) {\n  const raw = String(data || '');\n  if (raw.startsWith('course:')) {\n    return { kind: 'course', courseId: raw.slice(7) };\n  }\n  if (raw.startsWith('lecture:')) {\n    return { kind: 'lecture', lectureId: raw.slice(8) };\n  }\n  if (raw.startsWith('ans:')) {\n    const parts = raw.split(':');\n    if (parts.length !== 3) return { kind: 'unknown', raw };\n    return {\n      kind: 'answer',\n      sessionId: parts[1],\n      choice: String(parts[2] || '').toUpperCase(),\n    };\n  }\n  if (raw.startsWith('next:')) {\n    return { kind: 'next', sessionId: raw.slice(5) };\n  }\n  return { kind: 'unknown', raw };\n}\n\nfunction uniquePreserve(list) {\n  const out = [];\n  const seen = new Set();\n  for (const item of list || []) {\n    const key = String(item);\n    if (!key || seen.has(key)) continue;\n    seen.add(key);\n    out.push(item);\n  }\n  return out;\n}\n\nfunction tallyAnswer({ session, correct, subtopicTitle }) {\n  const correctCount = Number(session.correct_count || 0) + (correct ? 1 : 0);\n  const answeredCount = Number(session.answered_count || 0) + 1;\n  const miss = uniquePreserve(\n    correct ? session.miss_subtopics || [] : [...(session.miss_subtopics || []), subtopicTitle].filter(Boolean),\n  );\n  return { correctCount, answeredCount, missSubtopics: miss };\n}\nconst base = $('Run — Route').first().json;\nconst courses = items.map((i) => i.json).filter((r) => r.id).slice(0, 2);\nif (!courses.length) {\n  return [{ json: { ...base, action: 'reply', out_text: 'Нет доступных курсов', keyboard: null, kb_rows: 0 } }];\n}\nconst keyboard = coursesKeyboard(courses);\nwhile (keyboard.inline_keyboard.length < 2) {\n  keyboard.inline_keyboard.push([{ text: '·', callback_data: 'noop' }]);\n}\nreturn [{ json: {\n  ...base,\n  action: 'reply',\n  out_text: 'Выберите курс:',\n  keyboard,\n  kb_rows: courses.length,\n} }];\n"
       }
     },
     {
-      "id": "67d5ca4f-040b-4920-8f87-d904e9a9bf5d",
+      "id": "dc7129b2-fa0c-4c78-8cc3-f8adebef448c",
+      "name": "IF — Has Courses",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1640,
+        1000
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "65f0ceb1-20bd-4bf4-abb3-10260c0149c2",
+              "leftValue": "={{ String($json.kb_rows || 0) }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "0f85064a-b5b2-4972-973a-f78d7d51086d",
+      "name": "Out — No Courses",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1760,
+        880
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "xxaZ5HTQ7zihMvte",
+          "name": "TelegramStudy"
+        }
+      },
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.out_text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        },
+        "replyMarkup": "none"
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "eb590c29-c7b1-4248-b36c-4fd1a16505c6",
       "name": "Out — Courses",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
       "position": [
         1760,
         1000
@@ -700,12 +759,48 @@
         }
       },
       "parameters": {
-        "jsCode": "const item = $input.first().json;\nconst creds = await this.getCredentials('telegramApi');\nconst base = String(creds.baseUrl || 'https://api.telegram.org').replace(/\\/$/, '');\nconst token = creds.accessToken;\nif (!token) {\n  throw new Error('telegramApi accessToken missing');\n}\nconst body = {\n  chat_id: item.chat_id,\n  text: item.out_text,\n  parse_mode: 'HTML',\n  disable_web_page_preview: true,\n};\nconst kb = item.keyboard;\nif (kb && Array.isArray(kb.inline_keyboard) && kb.inline_keyboard.length) {\n  body.reply_markup = kb;\n}\nconst res = await this.helpers.httpRequest({\n  method: 'POST',\n  url: `${base}/bot${token}/sendMessage`,\n  headers: { 'Content-Type': 'application/json' },\n  body,\n  json: true,\n});\nreturn [{ json: res }];"
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ ($json).chat_id }}",
+        "text": "={{ ($json).out_text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        },
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ ($json).keyboard.inline_keyboard[0][0].text }}",
+                    "additionalFields": {
+                      "callback_data": "={{ ($json).keyboard.inline_keyboard[0][0].callback_data }}"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ ($json).keyboard.inline_keyboard[1][0].text }}",
+                    "additionalFields": {
+                      "callback_data": "={{ ($json).keyboard.inline_keyboard[1][0].callback_data }}"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
       },
-      "continueOnFail": true
+      "onError": "continueRegularOutput"
     },
     {
-      "id": "88314386-5167-42d7-ab25-2f50552836e9",
+      "id": "629d0b18-d176-4a40-abc4-44aaac30db97",
       "name": "Ack — Courses",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
@@ -728,7 +823,7 @@
       "onError": "continueRegularOutput"
     },
     {
-      "id": "2520a58f-2750-4461-b781-5eae2479575b",
+      "id": "ca2d18bb-be17-4f02-be03-8cc5b5230b5b",
       "name": "Load — Lectures",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -752,7 +847,7 @@
       "alwaysOutputData": true
     },
     {
-      "id": "6b41131c-9788-4168-9832-be6338932121",
+      "id": "21827b31-ce45-465d-8a61-e5a19cca3c2a",
       "name": "Run — Format Lectures",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -761,14 +856,73 @@
         1240
       ],
       "parameters": {
-        "jsCode": "\n/**\n * Telegram quiz helpers for psy_08.\n * Pure functions — embedded into n8n Code nodes and covered by node:test.\n */\n\nconst QUIZ_SIZE = 10;\nconst CHOICES = ['A', 'B', 'C', 'D'];\n\nfunction hashSeed(str) {\n  let h = 2166136261;\n  const s = String(str || '');\n  for (let i = 0; i < s.length; i += 1) {\n    h ^= s.charCodeAt(i);\n    h = Math.imul(h, 16777619);\n  }\n  return h >>> 0;\n}\n\nfunction mulberry32(seed) {\n  let a = seed >>> 0;\n  return function rng() {\n    a = (a + 0x6d2b79f5) >>> 0;\n    let t = a;\n    t = Math.imul(t ^ (t >>> 15), t | 1);\n    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);\n    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;\n  };\n}\n\nfunction shuffle(arr, rng) {\n  const out = arr.slice();\n  for (let i = out.length - 1; i > 0; i -= 1) {\n    const j = Math.floor(rng() * (i + 1));\n    const tmp = out[i];\n    out[i] = out[j];\n    out[j] = tmp;\n  }\n  return out;\n}\n\nfunction lectureLabel(row) {\n  const meta = row && row.source_meta;\n  let folderPath = null;\n  if (meta && typeof meta === 'object') {\n    folderPath = meta.drive && meta.drive.folder_path;\n  } else if (typeof meta === 'string' && meta.trim()) {\n    try {\n      const parsed = JSON.parse(meta);\n      folderPath = parsed.drive && parsed.drive.folder_path;\n    } catch (_e) {\n      folderPath = null;\n    }\n  }\n  if (Array.isArray(folderPath) && folderPath.length) {\n    return String(folderPath[folderPath.length - 1]);\n  }\n  if (row && row.title && String(row.title).trim() && String(row.title) !== 'audio_16k.opus') {\n    return String(row.title).trim();\n  }\n  return 'Лекция';\n}\n\n/**\n * Prefer unanswered questions, diversify by subtopic, fill to limit.\n * @param {Array<object>} candidates\n * @param {{limit?: number, seed?: string|number}} [opts]\n */\nfunction selectQuizQuestions(candidates, opts = {}) {\n  const limit = opts.limit == null ? QUIZ_SIZE : Number(opts.limit);\n  const rng = mulberry32(hashSeed(opts.seed == null ? String(Date.now()) : opts.seed));\n  const list = Array.isArray(candidates) ? candidates : [];\n  const unanswered = list.filter((q) => !q.answered_before);\n  const answered = list.filter((q) => q.answered_before);\n\n  function diversify(pool) {\n    const bySub = new Map();\n    for (const q of shuffle(pool, rng)) {\n      const key = String(q.subtopic_id || q.id);\n      if (!bySub.has(key)) bySub.set(key, []);\n      bySub.get(key).push(q);\n    }\n    const keys = shuffle([...bySub.keys()], rng);\n    const out = [];\n    let progressed = true;\n    while (out.length < limit && progressed) {\n      progressed = false;\n      for (const key of keys) {\n        const bucket = bySub.get(key);\n        if (bucket && bucket.length) {\n          out.push(bucket.shift());\n          progressed = true;\n          if (out.length >= limit) break;\n        }\n      }\n    }\n    return out;\n  }\n\n  let selected = diversify(unanswered);\n  if (selected.length < limit) {\n    const used = new Set(selected.map((q) => String(q.id)));\n    const fill = diversify(answered.filter((q) => !used.has(String(q.id))));\n    selected = selected.concat(fill).slice(0, limit);\n  }\n  return selected.slice(0, limit);\n}\n\nfunction escapeHtml(text) {\n  return String(text == null ? '' : text)\n    .replace(/&/g, '&amp;')\n    .replace(/</g, '&lt;')\n    .replace(/>/g, '&gt;');\n}\n\nfunction choiceText(question, letter) {\n  const key = `choice_${String(letter).toLowerCase()}`;\n  return question[key] || '';\n}\n\nfunction formatQuestionMessage(question, index, total) {\n  const n = index + 1;\n  const lines = [\n    `<b>Вопрос ${n} из ${total}</b>`,\n    '',\n    escapeHtml(question.stem),\n    '',\n    `<b>A.</b> ${escapeHtml(choiceText(question, 'A'))}`,\n    `<b>B.</b> ${escapeHtml(choiceText(question, 'B'))}`,\n    `<b>C.</b> ${escapeHtml(choiceText(question, 'C'))}`,\n    `<b>D.</b> ${escapeHtml(choiceText(question, 'D'))}`,\n  ];\n  return lines.join('\\n');\n}\n\n/** Telegram Bot API reply_markup shape (not n8n Telegram-node fixedCollection). */\nfunction inlineKeyboardRows(buttonsRows) {\n  return {\n    inline_keyboard: (buttonsRows || []).map((row) =>\n      (row || []).map((btn) => ({\n        text: String(btn.text || ''),\n        callback_data: String(btn.callback_data || ''),\n      })),\n    ),\n  };\n}\n\nfunction choiceKeyboard(sessionId) {\n  return inlineKeyboardRows([\n    CHOICES.map((letter) => ({\n      text: letter,\n      callback_data: `ans:${sessionId}:${letter}`,\n    })),\n  ]);\n}\n\nfunction nextKeyboard(sessionId) {\n  return inlineKeyboardRows([[{ text: 'Дальше', callback_data: `next:${sessionId}` }]]);\n}\n\nfunction coursesKeyboard(courses) {\n  return inlineKeyboardRows(\n    (courses || []).map((c) => [\n      {\n        text: String(c.title || 'Курс').slice(0, 60),\n        callback_data: `course:${c.id}`,\n      },\n    ]),\n  );\n}\n\nfunction lecturesKeyboard(lectures) {\n  return inlineKeyboardRows(\n    (lectures || []).map((l) => [\n      {\n        text: lectureLabel(l).slice(0, 60),\n        callback_data: `lecture:${l.id}`,\n      },\n    ]),\n  );\n}\n\nfunction explanationFor(question, chosen) {\n  const map = question.choice_explanations;\n  if (map && typeof map === 'object') {\n    const fromChoice = map[chosen] || map[String(chosen).toLowerCase()];\n    if (fromChoice) return String(fromChoice);\n  }\n  if (question.explanation) return String(question.explanation);\n  return '';\n}\n\nfunction anchorLine(question) {\n  if (question.source_kind === 'term') {\n    const term = question.term_canonical || 'термин';\n    const def = question.term_definition || '';\n    if (def) {\n      return `Термин: <b>${escapeHtml(term)}</b> — ${escapeHtml(def)}`;\n    }\n    return `Термин: <b>${escapeHtml(term)}</b>`;\n  }\n  const thesis = question.thesis || '';\n  if (thesis) {\n    return `Тезис: ${escapeHtml(thesis)}`;\n  }\n  return '';\n}\n\nfunction formatFeedback({ correct, chosen, question }) {\n  const right = String(question.correct_choice || '').toUpperCase();\n  const pick = String(chosen || '').toUpperCase();\n  const expl = explanationFor(question, pick);\n  const lines = [];\n  if (correct) {\n    lines.push('<b>Верно</b>');\n  } else {\n    lines.push('<b>Неверно</b>');\n    lines.push(`Правильный вариант: <b>${escapeHtml(right)}</b>. ${escapeHtml(choiceText(question, right))}`);\n  }\n  if (expl) {\n    lines.push('');\n    lines.push(escapeHtml(expl));\n  }\n  const anchor = anchorLine(question);\n  if (anchor) {\n    lines.push('');\n    lines.push(anchor);\n  }\n  return lines.join('\\n');\n}\n\nfunction formatSummary({ correctCount, total, missSubtopics }) {\n  const lines = [`<b>Итог: ${correctCount}/${total}</b>`];\n  const misses = (missSubtopics || []).filter(Boolean);\n  if (misses.length) {\n    lines.push('');\n    lines.push('Подтемы с ошибками:');\n    for (const title of misses) {\n      lines.push(`• ${escapeHtml(title)}`);\n    }\n  } else {\n    lines.push('');\n    lines.push('Ошибок по подтемам нет — отличная сессия.');\n  }\n  lines.push('');\n  lines.push('Новая сессия: /quiz');\n  return lines.join('\\n');\n}\n\nfunction ratingForAnswer(correct) {\n  return correct ? 3 : 1;\n}\n\nfunction computeResponseMs(askedAt, now) {\n  if (!askedAt) return null;\n  const start = new Date(askedAt).getTime();\n  const end = now ? new Date(now).getTime() : Date.now();\n  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;\n  return Math.max(0, Math.round(end - start));\n}\n\nfunction parseCallback(data) {\n  const raw = String(data || '');\n  if (raw.startsWith('course:')) {\n    return { kind: 'course', courseId: raw.slice(7) };\n  }\n  if (raw.startsWith('lecture:')) {\n    return { kind: 'lecture', lectureId: raw.slice(8) };\n  }\n  if (raw.startsWith('ans:')) {\n    const parts = raw.split(':');\n    if (parts.length !== 3) return { kind: 'unknown', raw };\n    return {\n      kind: 'answer',\n      sessionId: parts[1],\n      choice: String(parts[2] || '').toUpperCase(),\n    };\n  }\n  if (raw.startsWith('next:')) {\n    return { kind: 'next', sessionId: raw.slice(5) };\n  }\n  return { kind: 'unknown', raw };\n}\n\nfunction uniquePreserve(list) {\n  const out = [];\n  const seen = new Set();\n  for (const item of list || []) {\n    const key = String(item);\n    if (!key || seen.has(key)) continue;\n    seen.add(key);\n    out.push(item);\n  }\n  return out;\n}\n\nfunction tallyAnswer({ session, correct, subtopicTitle }) {\n  const correctCount = Number(session.correct_count || 0) + (correct ? 1 : 0);\n  const answeredCount = Number(session.answered_count || 0) + 1;\n  const miss = uniquePreserve(\n    correct ? session.miss_subtopics || [] : [...(session.miss_subtopics || []), subtopicTitle].filter(Boolean),\n  );\n  return { correctCount, answeredCount, missSubtopics: miss };\n}\nconst base = $('Run — Route').first().json;\nconst lectures = items.map((i) => i.json).filter((r) => r.id);\nif (!lectures.length) {\n  return [{ json: { ...base, action: 'reply', out_text: 'В этом курсе нет лекций с готовыми вопросами.', keyboard: null } }];\n}\nreturn [{ json: {\n  ...base,\n  action: 'reply',\n  out_text: 'Выберите лекцию:',\n  keyboard: lecturesKeyboard(lectures),\n} }];\n"
+        "jsCode": "\n/**\n * Telegram quiz helpers for psy_08.\n * Pure functions — embedded into n8n Code nodes and covered by node:test.\n */\n\nconst QUIZ_SIZE = 10;\nconst CHOICES = ['A', 'B', 'C', 'D'];\n\nfunction hashSeed(str) {\n  let h = 2166136261;\n  const s = String(str || '');\n  for (let i = 0; i < s.length; i += 1) {\n    h ^= s.charCodeAt(i);\n    h = Math.imul(h, 16777619);\n  }\n  return h >>> 0;\n}\n\nfunction mulberry32(seed) {\n  let a = seed >>> 0;\n  return function rng() {\n    a = (a + 0x6d2b79f5) >>> 0;\n    let t = a;\n    t = Math.imul(t ^ (t >>> 15), t | 1);\n    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);\n    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;\n  };\n}\n\nfunction shuffle(arr, rng) {\n  const out = arr.slice();\n  for (let i = out.length - 1; i > 0; i -= 1) {\n    const j = Math.floor(rng() * (i + 1));\n    const tmp = out[i];\n    out[i] = out[j];\n    out[j] = tmp;\n  }\n  return out;\n}\n\nfunction lectureLabel(row) {\n  const meta = row && row.source_meta;\n  let folderPath = null;\n  if (meta && typeof meta === 'object') {\n    folderPath = meta.drive && meta.drive.folder_path;\n  } else if (typeof meta === 'string' && meta.trim()) {\n    try {\n      const parsed = JSON.parse(meta);\n      folderPath = parsed.drive && parsed.drive.folder_path;\n    } catch (_e) {\n      folderPath = null;\n    }\n  }\n  if (Array.isArray(folderPath) && folderPath.length) {\n    return String(folderPath[folderPath.length - 1]);\n  }\n  if (row && row.title && String(row.title).trim() && String(row.title) !== 'audio_16k.opus') {\n    return String(row.title).trim();\n  }\n  return 'Лекция';\n}\n\n/**\n * Prefer unanswered questions, diversify by subtopic, fill to limit.\n * @param {Array<object>} candidates\n * @param {{limit?: number, seed?: string|number}} [opts]\n */\nfunction selectQuizQuestions(candidates, opts = {}) {\n  const limit = opts.limit == null ? QUIZ_SIZE : Number(opts.limit);\n  const rng = mulberry32(hashSeed(opts.seed == null ? String(Date.now()) : opts.seed));\n  const list = Array.isArray(candidates) ? candidates : [];\n  const unanswered = list.filter((q) => !q.answered_before);\n  const answered = list.filter((q) => q.answered_before);\n\n  function diversify(pool) {\n    const bySub = new Map();\n    for (const q of shuffle(pool, rng)) {\n      const key = String(q.subtopic_id || q.id);\n      if (!bySub.has(key)) bySub.set(key, []);\n      bySub.get(key).push(q);\n    }\n    const keys = shuffle([...bySub.keys()], rng);\n    const out = [];\n    let progressed = true;\n    while (out.length < limit && progressed) {\n      progressed = false;\n      for (const key of keys) {\n        const bucket = bySub.get(key);\n        if (bucket && bucket.length) {\n          out.push(bucket.shift());\n          progressed = true;\n          if (out.length >= limit) break;\n        }\n      }\n    }\n    return out;\n  }\n\n  let selected = diversify(unanswered);\n  if (selected.length < limit) {\n    const used = new Set(selected.map((q) => String(q.id)));\n    const fill = diversify(answered.filter((q) => !used.has(String(q.id))));\n    selected = selected.concat(fill).slice(0, limit);\n  }\n  return selected.slice(0, limit);\n}\n\nfunction escapeHtml(text) {\n  return String(text == null ? '' : text)\n    .replace(/&/g, '&amp;')\n    .replace(/</g, '&lt;')\n    .replace(/>/g, '&gt;');\n}\n\nfunction choiceText(question, letter) {\n  const key = `choice_${String(letter).toLowerCase()}`;\n  return question[key] || '';\n}\n\nfunction formatQuestionMessage(question, index, total) {\n  const n = index + 1;\n  const lines = [\n    `<b>Вопрос ${n} из ${total}</b>`,\n    '',\n    escapeHtml(question.stem),\n    '',\n    `<b>A.</b> ${escapeHtml(choiceText(question, 'A'))}`,\n    `<b>B.</b> ${escapeHtml(choiceText(question, 'B'))}`,\n    `<b>C.</b> ${escapeHtml(choiceText(question, 'C'))}`,\n    `<b>D.</b> ${escapeHtml(choiceText(question, 'D'))}`,\n  ];\n  return lines.join('\\n');\n}\n\n/** Telegram Bot API reply_markup shape (not n8n Telegram-node fixedCollection). */\nfunction inlineKeyboardRows(buttonsRows) {\n  return {\n    inline_keyboard: (buttonsRows || []).map((row) =>\n      (row || []).map((btn) => ({\n        text: String(btn.text || ''),\n        callback_data: String(btn.callback_data || ''),\n      })),\n    ),\n  };\n}\n\nfunction choiceKeyboard(sessionId) {\n  return inlineKeyboardRows([\n    CHOICES.map((letter) => ({\n      text: letter,\n      callback_data: `ans:${sessionId}:${letter}`,\n    })),\n  ]);\n}\n\nfunction nextKeyboard(sessionId) {\n  return inlineKeyboardRows([[{ text: 'Дальше', callback_data: `next:${sessionId}` }]]);\n}\n\nfunction coursesKeyboard(courses) {\n  return inlineKeyboardRows(\n    (courses || []).map((c) => [\n      {\n        text: String(c.title || 'Курс').slice(0, 60),\n        callback_data: `course:${c.id}`,\n      },\n    ]),\n  );\n}\n\nfunction lecturesKeyboard(lectures) {\n  return inlineKeyboardRows(\n    (lectures || []).map((l) => [\n      {\n        text: lectureLabel(l).slice(0, 60),\n        callback_data: `lecture:${l.id}`,\n      },\n    ]),\n  );\n}\n\nfunction explanationFor(question, chosen) {\n  const map = question.choice_explanations;\n  if (map && typeof map === 'object') {\n    const fromChoice = map[chosen] || map[String(chosen).toLowerCase()];\n    if (fromChoice) return String(fromChoice);\n  }\n  if (question.explanation) return String(question.explanation);\n  return '';\n}\n\nfunction anchorLine(question) {\n  if (question.source_kind === 'term') {\n    const term = question.term_canonical || 'термин';\n    const def = question.term_definition || '';\n    if (def) {\n      return `Термин: <b>${escapeHtml(term)}</b> — ${escapeHtml(def)}`;\n    }\n    return `Термин: <b>${escapeHtml(term)}</b>`;\n  }\n  const thesis = question.thesis || '';\n  if (thesis) {\n    return `Тезис: ${escapeHtml(thesis)}`;\n  }\n  return '';\n}\n\nfunction formatFeedback({ correct, chosen, question }) {\n  const right = String(question.correct_choice || '').toUpperCase();\n  const pick = String(chosen || '').toUpperCase();\n  const expl = explanationFor(question, pick);\n  const lines = [];\n  if (correct) {\n    lines.push('<b>Верно</b>');\n  } else {\n    lines.push('<b>Неверно</b>');\n    lines.push(`Правильный вариант: <b>${escapeHtml(right)}</b>. ${escapeHtml(choiceText(question, right))}`);\n  }\n  if (expl) {\n    lines.push('');\n    lines.push(escapeHtml(expl));\n  }\n  const anchor = anchorLine(question);\n  if (anchor) {\n    lines.push('');\n    lines.push(anchor);\n  }\n  return lines.join('\\n');\n}\n\nfunction formatSummary({ correctCount, total, missSubtopics }) {\n  const lines = [`<b>Итог: ${correctCount}/${total}</b>`];\n  const misses = (missSubtopics || []).filter(Boolean);\n  if (misses.length) {\n    lines.push('');\n    lines.push('Подтемы с ошибками:');\n    for (const title of misses) {\n      lines.push(`• ${escapeHtml(title)}`);\n    }\n  } else {\n    lines.push('');\n    lines.push('Ошибок по подтемам нет — отличная сессия.');\n  }\n  lines.push('');\n  lines.push('Новая сессия: /quiz');\n  return lines.join('\\n');\n}\n\nfunction ratingForAnswer(correct) {\n  return correct ? 3 : 1;\n}\n\nfunction computeResponseMs(askedAt, now) {\n  if (!askedAt) return null;\n  const start = new Date(askedAt).getTime();\n  const end = now ? new Date(now).getTime() : Date.now();\n  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;\n  return Math.max(0, Math.round(end - start));\n}\n\nfunction parseCallback(data) {\n  const raw = String(data || '');\n  if (raw.startsWith('course:')) {\n    return { kind: 'course', courseId: raw.slice(7) };\n  }\n  if (raw.startsWith('lecture:')) {\n    return { kind: 'lecture', lectureId: raw.slice(8) };\n  }\n  if (raw.startsWith('ans:')) {\n    const parts = raw.split(':');\n    if (parts.length !== 3) return { kind: 'unknown', raw };\n    return {\n      kind: 'answer',\n      sessionId: parts[1],\n      choice: String(parts[2] || '').toUpperCase(),\n    };\n  }\n  if (raw.startsWith('next:')) {\n    return { kind: 'next', sessionId: raw.slice(5) };\n  }\n  return { kind: 'unknown', raw };\n}\n\nfunction uniquePreserve(list) {\n  const out = [];\n  const seen = new Set();\n  for (const item of list || []) {\n    const key = String(item);\n    if (!key || seen.has(key)) continue;\n    seen.add(key);\n    out.push(item);\n  }\n  return out;\n}\n\nfunction tallyAnswer({ session, correct, subtopicTitle }) {\n  const correctCount = Number(session.correct_count || 0) + (correct ? 1 : 0);\n  const answeredCount = Number(session.answered_count || 0) + 1;\n  const miss = uniquePreserve(\n    correct ? session.miss_subtopics || [] : [...(session.miss_subtopics || []), subtopicTitle].filter(Boolean),\n  );\n  return { correctCount, answeredCount, missSubtopics: miss };\n}\nconst base = $('Run — Route').first().json;\nconst lectures = items.map((i) => i.json).filter((r) => r.id).slice(0, 4);\nif (!lectures.length) {\n  return [{ json: { ...base, action: 'reply', out_text: 'В этом курсе нет лекций с готовыми вопросами.', keyboard: null, kb_rows: 0 } }];\n}\nconst keyboard = lecturesKeyboard(lectures);\nwhile (keyboard.inline_keyboard.length < 4) {\n  keyboard.inline_keyboard.push([{ text: '·', callback_data: 'noop' }]);\n}\nreturn [{ json: {\n  ...base,\n  action: 'reply',\n  out_text: 'Выберите лекцию:',\n  keyboard,\n  kb_rows: lectures.length,\n} }];\n"
       }
     },
     {
-      "id": "9c03d1ac-771b-4608-94d6-452af8214859",
+      "id": "6f34c578-1618-4d4e-a55e-b90a652d0404",
+      "name": "IF — Has Lectures",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1640,
+        1240
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "6a5c1ae1-ec7f-4337-819a-9c54273b8109",
+              "leftValue": "={{ String($json.kb_rows || 0) }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "b1d3d086-caeb-4733-8896-684fd20a7bf5",
+      "name": "Out — No Lectures",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1760,
+        1160
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "xxaZ5HTQ7zihMvte",
+          "name": "TelegramStudy"
+        }
+      },
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.out_text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        },
+        "replyMarkup": "none"
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "791eda5b-6f26-4bb3-b593-997cec78a8d2",
       "name": "Out — Lectures",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
       "position": [
         1760,
         1240
@@ -780,12 +934,72 @@
         }
       },
       "parameters": {
-        "jsCode": "const item = $input.first().json;\nconst creds = await this.getCredentials('telegramApi');\nconst base = String(creds.baseUrl || 'https://api.telegram.org').replace(/\\/$/, '');\nconst token = creds.accessToken;\nif (!token) {\n  throw new Error('telegramApi accessToken missing');\n}\nconst body = {\n  chat_id: item.chat_id,\n  text: item.out_text,\n  parse_mode: 'HTML',\n  disable_web_page_preview: true,\n};\nconst kb = item.keyboard;\nif (kb && Array.isArray(kb.inline_keyboard) && kb.inline_keyboard.length) {\n  body.reply_markup = kb;\n}\nconst res = await this.helpers.httpRequest({\n  method: 'POST',\n  url: `${base}/bot${token}/sendMessage`,\n  headers: { 'Content-Type': 'application/json' },\n  body,\n  json: true,\n});\nreturn [{ json: res }];"
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ ($json).chat_id }}",
+        "text": "={{ ($json).out_text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        },
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ ($json).keyboard.inline_keyboard[0][0].text }}",
+                    "additionalFields": {
+                      "callback_data": "={{ ($json).keyboard.inline_keyboard[0][0].callback_data }}"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ ($json).keyboard.inline_keyboard[1][0].text }}",
+                    "additionalFields": {
+                      "callback_data": "={{ ($json).keyboard.inline_keyboard[1][0].callback_data }}"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ ($json).keyboard.inline_keyboard[2][0].text }}",
+                    "additionalFields": {
+                      "callback_data": "={{ ($json).keyboard.inline_keyboard[2][0].callback_data }}"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ ($json).keyboard.inline_keyboard[3][0].text }}",
+                    "additionalFields": {
+                      "callback_data": "={{ ($json).keyboard.inline_keyboard[3][0].callback_data }}"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
       },
-      "continueOnFail": true
+      "onError": "continueRegularOutput"
     },
     {
-      "id": "3469083c-5b4e-480d-95df-b93a96f0f28c",
+      "id": "79120cc0-e17b-4ec0-a2fa-78bca330b3c5",
       "name": "Ack — Lectures",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
@@ -808,7 +1022,7 @@
       "onError": "continueRegularOutput"
     },
     {
-      "id": "38f4f6e8-81b2-4628-b203-aa75acfac124",
+      "id": "535ecc0a-7758-46ed-a3e0-49fa36b3b9c4",
       "name": "Load — Candidates",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -832,7 +1046,7 @@
       "alwaysOutputData": true
     },
     {
-      "id": "c972840a-7d04-4807-bc34-f0a371d0c9a6",
+      "id": "bebc95f8-812d-45e6-a35d-e3aa7389d584",
       "name": "Run — Select Questions",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -845,7 +1059,7 @@
       }
     },
     {
-      "id": "71d62459-6a07-4399-9aac-e0850095d33f",
+      "id": "6a0cd0f7-99a3-48f2-87f9-c599714c210e",
       "name": "IF — Has Questions",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
@@ -862,7 +1076,7 @@
           },
           "conditions": [
             {
-              "id": "9e37aaf0-6b53-4396-8a93-6fa48040e8bc",
+              "id": "96d5be43-2036-4910-8c56-06385122215f",
               "leftValue": "={{ String($json.skip_insert) }}",
               "rightValue": "true",
               "operator": {
@@ -876,7 +1090,7 @@
       }
     },
     {
-      "id": "707152df-3eb0-4a5d-b85e-5bb9735ae32b",
+      "id": "4f92c989-9e57-4533-bfed-b4f23aa69697",
       "name": "DB — Insert Session",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -899,7 +1113,7 @@
       }
     },
     {
-      "id": "17eda231-25ef-4a77-af21-34cf9820d683",
+      "id": "6f6d81fb-3dc6-44c5-b206-bfab2369a076",
       "name": "Run — After Insert",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -912,10 +1126,10 @@
       }
     },
     {
-      "id": "08a9e3aa-5444-4e9d-bc36-08882ef48db8",
+      "id": "a3ae4be2-5a01-4005-b26f-4533bbc19d13",
       "name": "Out — First Question",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
       "position": [
         2240,
         1560
@@ -927,12 +1141,54 @@
         }
       },
       "parameters": {
-        "jsCode": "const item = $input.first().json;\nconst creds = await this.getCredentials('telegramApi');\nconst base = String(creds.baseUrl || 'https://api.telegram.org').replace(/\\/$/, '');\nconst token = creds.accessToken;\nif (!token) {\n  throw new Error('telegramApi accessToken missing');\n}\nconst body = {\n  chat_id: item.chat_id,\n  text: item.out_text,\n  parse_mode: 'HTML',\n  disable_web_page_preview: true,\n};\nconst kb = item.keyboard;\nif (kb && Array.isArray(kb.inline_keyboard) && kb.inline_keyboard.length) {\n  body.reply_markup = kb;\n}\nconst res = await this.helpers.httpRequest({\n  method: 'POST',\n  url: `${base}/bot${token}/sendMessage`,\n  headers: { 'Content-Type': 'application/json' },\n  body,\n  json: true,\n});\nreturn [{ json: res }];"
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ ($json).chat_id }}",
+        "text": "={{ ($json).out_text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        },
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ ($json).keyboard.inline_keyboard[0][0].text }}",
+                    "additionalFields": {
+                      "callback_data": "={{ ($json).keyboard.inline_keyboard[0][0].callback_data }}"
+                    }
+                  },
+                  {
+                    "text": "={{ ($json).keyboard.inline_keyboard[0][1].text }}",
+                    "additionalFields": {
+                      "callback_data": "={{ ($json).keyboard.inline_keyboard[0][1].callback_data }}"
+                    }
+                  },
+                  {
+                    "text": "={{ ($json).keyboard.inline_keyboard[0][2].text }}",
+                    "additionalFields": {
+                      "callback_data": "={{ ($json).keyboard.inline_keyboard[0][2].callback_data }}"
+                    }
+                  },
+                  {
+                    "text": "={{ ($json).keyboard.inline_keyboard[0][3].text }}",
+                    "additionalFields": {
+                      "callback_data": "={{ ($json).keyboard.inline_keyboard[0][3].callback_data }}"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
       },
-      "continueOnFail": true
+      "onError": "continueRegularOutput"
     },
     {
-      "id": "e91894ee-f846-456b-aacd-f82901dea7d8",
+      "id": "a3722771-bdef-46a3-9c28-d64e4ecefd18",
       "name": "Ack — Start",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
@@ -955,7 +1211,7 @@
       "onError": "continueRegularOutput"
     },
     {
-      "id": "3c8b90b9-2ed6-45e8-8cf2-5584a42180f4",
+      "id": "c27e7144-b36f-49b0-b353-6f06af9372d0",
       "name": "Out — No Questions",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
@@ -983,7 +1239,7 @@
       "onError": "continueRegularOutput"
     },
     {
-      "id": "458441ce-fac3-4594-9888-f398c24f5f1f",
+      "id": "a616b187-bebe-4c5b-9eaf-e62ae70e1c47",
       "name": "Load — Current Question",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -1007,7 +1263,7 @@
       "alwaysOutputData": true
     },
     {
-      "id": "91b5a74d-de0b-4e5c-b388-bbcb731277bf",
+      "id": "f2dc4b98-02e7-4ba8-b002-3c32976f6ac4",
       "name": "Run — Grade Answer",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -1020,7 +1276,7 @@
       }
     },
     {
-      "id": "b7203458-1bc6-4358-850f-615e680b1bd5",
+      "id": "462273b0-3274-4319-9c63-696233acc0c3",
       "name": "DB — Write Answer",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -1043,10 +1299,10 @@
       }
     },
     {
-      "id": "80c1de5e-9a9c-4dca-9cae-75341eddf03d",
+      "id": "31ebe701-0df8-46ec-b8fc-71b4b876c226",
       "name": "Out — Feedback",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
       "position": [
         2000,
         1880
@@ -1058,12 +1314,36 @@
         }
       },
       "parameters": {
-        "jsCode": "const item = $('Run — Grade Answer').first().json;\nconst creds = await this.getCredentials('telegramApi');\nconst base = String(creds.baseUrl || 'https://api.telegram.org').replace(/\\/$/, '');\nconst token = creds.accessToken;\nif (!token) {\n  throw new Error('telegramApi accessToken missing');\n}\nconst body = {\n  chat_id: item.chat_id,\n  text: item.out_text,\n  parse_mode: 'HTML',\n  disable_web_page_preview: true,\n};\nconst kb = item.keyboard;\nif (kb && Array.isArray(kb.inline_keyboard) && kb.inline_keyboard.length) {\n  body.reply_markup = kb;\n}\nconst res = await this.helpers.httpRequest({\n  method: 'POST',\n  url: `${base}/bot${token}/sendMessage`,\n  headers: { 'Content-Type': 'application/json' },\n  body,\n  json: true,\n});\nreturn [{ json: res }];"
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ ($('Run — Grade Answer').item.json).chat_id }}",
+        "text": "={{ ($('Run — Grade Answer').item.json).out_text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        },
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ ($('Run — Grade Answer').item.json).keyboard.inline_keyboard[0][0].text }}",
+                    "additionalFields": {
+                      "callback_data": "={{ ($('Run — Grade Answer').item.json).keyboard.inline_keyboard[0][0].callback_data }}"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
       },
-      "continueOnFail": true
+      "onError": "continueRegularOutput"
     },
     {
-      "id": "d4de06b6-0460-44e1-af41-ccbeb134193f",
+      "id": "c203f6a2-cfe1-4c35-8866-07ba4ddf6f05",
       "name": "Ack — Answer",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
@@ -1086,7 +1366,7 @@
       "onError": "continueRegularOutput"
     },
     {
-      "id": "d03ee052-f37b-4608-bcf7-183c1a06b301",
+      "id": "ec19623c-4974-43f6-92fc-d76a38bfa4ab",
       "name": "Load — Next Question",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -1110,7 +1390,7 @@
       "alwaysOutputData": true
     },
     {
-      "id": "8cddfc13-52c2-4e77-acdb-324288db2133",
+      "id": "8b366acd-e3ca-462a-aa97-3394ab028cea",
       "name": "Run — Next Step",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -1123,7 +1403,7 @@
       }
     },
     {
-      "id": "04def527-e718-4afc-8305-e7c5ba41fb82",
+      "id": "7a6bb920-89e5-41fb-a4ac-0398ba09c76a",
       "name": "DB — Advance Or Finish",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -1146,10 +1426,41 @@
       }
     },
     {
-      "id": "2abddb31-1252-4feb-949e-0192cf1f04e9",
-      "name": "Out — Next Or Summary",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
+      "id": "a302bd45-5f41-4784-8194-ce5e47c5c98e",
+      "name": "IF — Next Has Keyboard",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1880,
+        2200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "74a6b0d5-f4e3-46fa-bcbd-e8872d230e08",
+              "leftValue": "={{ String($('Run — Next Step').item.json.keyboard && $('Run — Next Step').item.json.keyboard.inline_keyboard ? $('Run — Next Step').item.json.keyboard.inline_keyboard.length : 0) }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "4dd2863f-6087-4a2e-b204-98bfe5e49d29",
+      "name": "Out — Next Question",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
       "position": [
         2000,
         2200
@@ -1161,18 +1472,88 @@
         }
       },
       "parameters": {
-        "jsCode": "const item = $('Run — Next Step').first().json;\nconst creds = await this.getCredentials('telegramApi');\nconst base = String(creds.baseUrl || 'https://api.telegram.org').replace(/\\/$/, '');\nconst token = creds.accessToken;\nif (!token) {\n  throw new Error('telegramApi accessToken missing');\n}\nconst body = {\n  chat_id: item.chat_id,\n  text: item.out_text,\n  parse_mode: 'HTML',\n  disable_web_page_preview: true,\n};\nconst kb = item.keyboard;\nif (kb && Array.isArray(kb.inline_keyboard) && kb.inline_keyboard.length) {\n  body.reply_markup = kb;\n}\nconst res = await this.helpers.httpRequest({\n  method: 'POST',\n  url: `${base}/bot${token}/sendMessage`,\n  headers: { 'Content-Type': 'application/json' },\n  body,\n  json: true,\n});\nreturn [{ json: res }];"
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ ($('Run — Next Step').item.json).chat_id }}",
+        "text": "={{ ($('Run — Next Step').item.json).out_text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        },
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ ($('Run — Next Step').item.json).keyboard.inline_keyboard[0][0].text }}",
+                    "additionalFields": {
+                      "callback_data": "={{ ($('Run — Next Step').item.json).keyboard.inline_keyboard[0][0].callback_data }}"
+                    }
+                  },
+                  {
+                    "text": "={{ ($('Run — Next Step').item.json).keyboard.inline_keyboard[0][1].text }}",
+                    "additionalFields": {
+                      "callback_data": "={{ ($('Run — Next Step').item.json).keyboard.inline_keyboard[0][1].callback_data }}"
+                    }
+                  },
+                  {
+                    "text": "={{ ($('Run — Next Step').item.json).keyboard.inline_keyboard[0][2].text }}",
+                    "additionalFields": {
+                      "callback_data": "={{ ($('Run — Next Step').item.json).keyboard.inline_keyboard[0][2].callback_data }}"
+                    }
+                  },
+                  {
+                    "text": "={{ ($('Run — Next Step').item.json).keyboard.inline_keyboard[0][3].text }}",
+                    "additionalFields": {
+                      "callback_data": "={{ ($('Run — Next Step').item.json).keyboard.inline_keyboard[0][3].callback_data }}"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
       },
-      "continueOnFail": true
+      "onError": "continueRegularOutput"
     },
     {
-      "id": "40249a32-c3b9-423b-b3b2-ab1ca4735baa",
-      "name": "Ack — Next",
+      "id": "b7ed0643-71be-4161-8787-001b026ed76a",
+      "name": "Out — Summary",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
         2000,
         2320
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "xxaZ5HTQ7zihMvte",
+          "name": "TelegramStudy"
+        }
+      },
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Run — Next Step').item.json.chat_id }}",
+        "text": "={{ $('Run — Next Step').item.json.out_text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        },
+        "replyMarkup": "none"
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "aedadf2d-f448-4719-8857-60ed61225acf",
+      "name": "Ack — Next",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2000,
+        2440
       ],
       "credentials": {
         "telegramApi": {
@@ -1189,7 +1570,7 @@
       "onError": "continueRegularOutput"
     },
     {
-      "id": "6ff5125d-ebf1-4e25-a7d8-236b843a37d7",
+      "id": "a14538f3-e4a9-4b64-bbe4-0c220c176c2f",
       "name": "Ack — Stale",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
@@ -1212,7 +1593,7 @@
       "onError": "continueRegularOutput"
     },
     {
-      "id": "5a082f9c-1d7d-4c65-894e-d44a32f67295",
+      "id": "3403a063-21da-4505-adea-768e8ba48bf7",
       "name": "Ack — Noop",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
@@ -1364,12 +1745,30 @@
       "main": [
         [
           {
-            "node": "Out — Courses",
+            "node": "IF — Has Courses",
             "type": "main",
             "index": 0
           },
           {
             "node": "Ack — Courses",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Has Courses": {
+      "main": [
+        [
+          {
+            "node": "Out — Courses",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Out — No Courses",
             "type": "main",
             "index": 0
           }
@@ -1391,12 +1790,30 @@
       "main": [
         [
           {
-            "node": "Out — Lectures",
+            "node": "IF — Has Lectures",
             "type": "main",
             "index": 0
           },
           {
             "node": "Ack — Lectures",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Has Lectures": {
+      "main": [
+        [
+          {
+            "node": "Out — Lectures",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Out — No Lectures",
             "type": "main",
             "index": 0
           }
@@ -1534,12 +1951,30 @@
       "main": [
         [
           {
-            "node": "Out — Next Or Summary",
+            "node": "IF — Next Has Keyboard",
             "type": "main",
             "index": 0
           },
           {
             "node": "Ack — Next",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Next Has Keyboard": {
+      "main": [
+        [
+          {
+            "node": "Out — Next Question",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Out — Summary",
             "type": "main",
             "index": 0
           }

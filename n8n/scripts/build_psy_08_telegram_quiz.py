@@ -79,48 +79,59 @@ def tg_send(
     }
 
 
-def tg_send_markup(name: str, x: int, y: int, *, item_expr: str) -> dict:
-    """sendMessage with optional reply_markup via Code+credentials.
+def _btn(item_expr: str, row: int, col: int) -> dict:
+    """One inline button; text/callback from keyboard.inline_keyboard[row][col]."""
+    base = f"({item_expr}).keyboard.inline_keyboard[{row}][{col}]"
+    return {
+        "text": f"={{{{ {base}.text }}}}",
+        "additionalFields": {
+            "callback_data": f"={{{{ {base}.callback_data }}}}",
+        },
+    }
 
-    n8n Telegram node ignores dynamic inlineKeyboard expressions (empty keyboard).
-    item_expr: JS expression returning { chat_id, out_text, keyboard? }.
+
+def _rows_from_kb(item_expr: str, n_rows: int, cols: int = 1) -> dict:
+    rows = []
+    for r in range(n_rows):
+        buttons = [_btn(item_expr, r, c) for c in range(cols)]
+        rows.append({"row": {"buttons": buttons}})
+    return {"rows": rows}
+
+
+def tg_send_markup(
+    name: str,
+    x: int,
+    y: int,
+    *,
+    item_expr: str,
+    n_rows: int,
+    cols: int = 1,
+) -> dict:
+    """sendMessage with inline keyboard via per-button expressions.
+
+    n8n ignores a dynamic object in ``inlineKeyboard``; each text/callback_data
+    field must be its own expression. Caller pads/truncates keyboard to n_rows.
     """
-    js = f"""
-const item = {item_expr};
-const creds = await this.getCredentials('telegramApi');
-const base = String(creds.baseUrl || 'https://api.telegram.org').replace(/\\/$/, '');
-const token = creds.accessToken;
-if (!token) {{
-  throw new Error('telegramApi accessToken missing');
-}}
-const body = {{
-  chat_id: item.chat_id,
-  text: item.out_text,
-  parse_mode: 'HTML',
-  disable_web_page_preview: true,
-}};
-const kb = item.keyboard;
-if (kb && Array.isArray(kb.inline_keyboard) && kb.inline_keyboard.length) {{
-  body.reply_markup = kb;
-}}
-const res = await this.helpers.httpRequest({{
-  method: 'POST',
-  url: `${{base}}/bot${{token}}/sendMessage`,
-  headers: {{ 'Content-Type': 'application/json' }},
-  body,
-  json: true,
-}});
-return [{{ json: res }}];
-""".strip()
     return {
         "id": nid(),
         "name": name,
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
         "position": [x, y],
         "credentials": TG,
-        "parameters": {"jsCode": js},
-        "continueOnFail": True,
+        "parameters": {
+            "resource": "message",
+            "operation": "sendMessage",
+            "chatId": f"={{{{ ({item_expr}).chat_id }}}}",
+            "text": f"={{{{ ({item_expr}).out_text }}}}",
+            "additionalFields": {
+                "appendAttribution": False,
+                "parse_mode": "HTML",
+            },
+            "replyMarkup": "inlineKeyboard",
+            "inlineKeyboard": _rows_from_kb(item_expr, n_rows, cols),
+        },
+        "onError": "continueRegularOutput",
     }
 
 
@@ -340,19 +351,29 @@ return reply('help',
 """
 
 
+# n8n Telegram inlineKeyboard needs a fixed row count with per-field expressions.
+COURSE_KB_ROWS = 2
+LECTURE_KB_ROWS = 4
+
+
 def format_courses_js(quiz_lib: str) -> str:
     return f"""
 {quiz_lib}
 const base = $('Run — Route').first().json;
-const courses = items.map((i) => i.json).filter((r) => r.id);
+const courses = items.map((i) => i.json).filter((r) => r.id).slice(0, {COURSE_KB_ROWS});
 if (!courses.length) {{
-  return [{{ json: {{ ...base, action: 'reply', out_text: 'Нет доступных курсов', keyboard: null }} }}];
+  return [{{ json: {{ ...base, action: 'reply', out_text: 'Нет доступных курсов', keyboard: null, kb_rows: 0 }} }}];
+}}
+const keyboard = coursesKeyboard(courses);
+while (keyboard.inline_keyboard.length < {COURSE_KB_ROWS}) {{
+  keyboard.inline_keyboard.push([{{ text: '·', callback_data: 'noop' }}]);
 }}
 return [{{ json: {{
   ...base,
   action: 'reply',
   out_text: 'Выберите курс:',
-  keyboard: coursesKeyboard(courses),
+  keyboard,
+  kb_rows: courses.length,
 }} }}];
 """
 
@@ -361,15 +382,20 @@ def format_lectures_js(quiz_lib: str) -> str:
     return f"""
 {quiz_lib}
 const base = $('Run — Route').first().json;
-const lectures = items.map((i) => i.json).filter((r) => r.id);
+const lectures = items.map((i) => i.json).filter((r) => r.id).slice(0, {LECTURE_KB_ROWS});
 if (!lectures.length) {{
-  return [{{ json: {{ ...base, action: 'reply', out_text: 'В этом курсе нет лекций с готовыми вопросами.', keyboard: null }} }}];
+  return [{{ json: {{ ...base, action: 'reply', out_text: 'В этом курсе нет лекций с готовыми вопросами.', keyboard: null, kb_rows: 0 }} }}];
+}}
+const keyboard = lecturesKeyboard(lectures);
+while (keyboard.inline_keyboard.length < {LECTURE_KB_ROWS}) {{
+  keyboard.inline_keyboard.push([{{ text: '·', callback_data: 'noop' }}]);
 }}
 return [{{ json: {{
   ...base,
   action: 'reply',
   out_text: 'Выберите лекцию:',
-  keyboard: lecturesKeyboard(lectures),
+  keyboard,
+  kb_rows: lectures.length,
 }} }}];
 """
 
@@ -661,18 +687,42 @@ ORDER BY c.title;
         )
     )
     nodes.append(code("Run — Format Courses", format_courses_js(quiz_lib), 1520, 1000))
+    # Empty list → plain text; otherwise fixed-row inline keyboard (per-button expressions).
+    nodes.append(
+        iff(
+            "IF — Has Courses",
+            "={{ String($json.kb_rows || 0) }}",
+            "0",
+            1640,
+            1000,
+            op="notEquals",
+        )
+    )
+    nodes.append(
+        tg_send(
+            "Out — No Courses",
+            1760,
+            880,
+            text="={{ $json.out_text }}",
+            chat_id="={{ $json.chat_id }}",
+        )
+    )
     nodes.append(
         tg_send_markup(
             "Out — Courses",
             1760,
             1000,
-            item_expr="$input.first().json",
+            item_expr="$json",
+            n_rows=COURSE_KB_ROWS,
+            cols=1,
         )
     )
     nodes.append(tg_ack("Ack — Courses", 1760, 1120))
     link(connections, "Run — Switch Action", "Load — Courses", src_output=cases.index("pick_course"))
     link(connections, "Load — Courses", "Run — Format Courses")
-    link(connections, "Run — Format Courses", "Out — Courses")
+    link(connections, "Run — Format Courses", "IF — Has Courses")
+    link(connections, "IF — Has Courses", "Out — Courses", src_output=0)
+    link(connections, "IF — Has Courses", "Out — No Courses", src_output=1)
     link(connections, "Run — Format Courses", "Ack — Courses")
 
     # pick_lecture
@@ -693,18 +743,40 @@ ORDER BY COALESCE(l.source_meta #>> '{drive,folder_path,0}', l.title, l.id::text
     )
     nodes.append(code("Run — Format Lectures", format_lectures_js(quiz_lib), 1520, 1240))
     nodes.append(
+        iff(
+            "IF — Has Lectures",
+            "={{ String($json.kb_rows || 0) }}",
+            "0",
+            1640,
+            1240,
+            op="notEquals",
+        )
+    )
+    nodes.append(
+        tg_send(
+            "Out — No Lectures",
+            1760,
+            1160,
+            text="={{ $json.out_text }}",
+            chat_id="={{ $json.chat_id }}",
+        )
+    )
+    nodes.append(
         tg_send_markup(
             "Out — Lectures",
             1760,
             1240,
-            item_expr="$input.first().json",
+            item_expr="$json",
+            n_rows=LECTURE_KB_ROWS,
+            cols=1,
         )
     )
     nodes.append(tg_ack("Ack — Lectures", 1760, 1360))
-    # mark picking / close previous pick sessions lightly inside start; here just list
     link(connections, "Run — Switch Action", "Load — Lectures", src_output=cases.index("pick_lecture"))
     link(connections, "Load — Lectures", "Run — Format Lectures")
-    link(connections, "Run — Format Lectures", "Out — Lectures")
+    link(connections, "Run — Format Lectures", "IF — Has Lectures")
+    link(connections, "IF — Has Lectures", "Out — Lectures", src_output=0)
+    link(connections, "IF — Has Lectures", "Out — No Lectures", src_output=1)
     link(connections, "Run — Format Lectures", "Ack — Lectures")
 
     # start_quiz
@@ -801,7 +873,9 @@ RETURNING id;
             "Out — First Question",
             2240,
             1560,
-            item_expr="$input.first().json",
+            item_expr="$json",
+            n_rows=1,
+            cols=4,
         )
     )
     nodes.append(tg_ack("Ack — Start", 2240, 1680))
@@ -913,7 +987,9 @@ RETURNING id;
             "Out — Feedback",
             2000,
             1880,
-            item_expr="$('Run — Grade Answer').first().json",
+            item_expr="$('Run — Grade Answer').item.json",
+            n_rows=1,
+            cols=1,
         )
     )
     nodes.append(tg_ack("Ack — Answer", 2000, 2000))
@@ -984,18 +1060,41 @@ RETURNING id, status;
         )
     )
     nodes.append(
-        tg_send_markup(
-            "Out — Next Or Summary",
-            2000,
+        iff(
+            "IF — Next Has Keyboard",
+            "={{ String($('Run — Next Step').item.json.keyboard && $('Run — Next Step').item.json.keyboard.inline_keyboard ? $('Run — Next Step').item.json.keyboard.inline_keyboard.length : 0) }}",
+            "0",
+            1880,
             2200,
-            item_expr="$('Run — Next Step').first().json",
+            op="notEquals",
         )
     )
-    nodes.append(tg_ack("Ack — Next", 2000, 2320))
+    nodes.append(
+        tg_send_markup(
+            "Out — Next Question",
+            2000,
+            2200,
+            item_expr="$('Run — Next Step').item.json",
+            n_rows=1,
+            cols=4,
+        )
+    )
+    nodes.append(
+        tg_send(
+            "Out — Summary",
+            2000,
+            2320,
+            text="={{ $('Run — Next Step').item.json.out_text }}",
+            chat_id="={{ $('Run — Next Step').item.json.chat_id }}",
+        )
+    )
+    nodes.append(tg_ack("Ack — Next", 2000, 2440))
     link(connections, "Run — Switch Action", "Load — Next Question", src_output=cases.index("next"))
     link(connections, "Load — Next Question", "Run — Next Step")
     link(connections, "Run — Next Step", "DB — Advance Or Finish")
-    link(connections, "DB — Advance Or Finish", "Out — Next Or Summary")
+    link(connections, "DB — Advance Or Finish", "IF — Next Has Keyboard")
+    link(connections, "IF — Next Has Keyboard", "Out — Next Question", src_output=0)
+    link(connections, "IF — Next Has Keyboard", "Out — Summary", src_output=1)
     link(connections, "DB — Advance Or Finish", "Ack — Next")
 
     # stale / noop — only ack callback if present
