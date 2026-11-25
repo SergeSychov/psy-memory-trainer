@@ -12,6 +12,8 @@ const {
   tallyAnswer,
   ratingForAnswer,
   computeResponseMs,
+  coursesKeyboard,
+  choiceKeyboard,
   QUIZ_SIZE,
 } = require('./quiz_session');
 
@@ -160,4 +162,23 @@ test('tallyAnswer and rating helpers', () => {
     computeResponseMs('2026-11-19T10:00:00.000Z', '2026-11-19T10:00:01.500Z'),
     1500,
   );
+});
+
+test('coursesKeyboard / choiceKeyboard use Telegram inline_keyboard shape', () => {
+  const courses = coursesKeyboard([
+    { id: 'c1', title: 'Курс один' },
+    { id: 'c2', title: 'Курс два' },
+  ]);
+  assert.ok(Array.isArray(courses.inline_keyboard));
+  assert.equal(courses.inline_keyboard.length, 2);
+  assert.equal(courses.inline_keyboard[0][0].callback_data, 'course:c1');
+  assert.equal(courses.rows, undefined);
+
+  const choices = choiceKeyboard('sid');
+  assert.equal(choices.inline_keyboard.length, 1);
+  assert.deepEqual(
+    choices.inline_keyboard[0].map((b) => b.text),
+    ['A', 'B', 'C', 'D'],
+  );
+  assert.equal(choices.inline_keyboard[0][1].callback_data, 'ans:sid:B');
 });

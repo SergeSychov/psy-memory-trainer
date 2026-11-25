@@ -55,23 +55,8 @@ def tg_send(
     *,
     text: str,
     chat_id: str,
-    keyboard: str | None = None,
 ) -> dict:
-    params: dict = {
-        "resource": "message",
-        "operation": "sendMessage",
-        "chatId": chat_id,
-        "text": text,
-        "additionalFields": {
-            "appendAttribution": False,
-            "parse_mode": "HTML",
-        },
-    }
-    if keyboard:
-        params["replyMarkup"] = "inlineKeyboard"
-        params["inlineKeyboard"] = keyboard
-    else:
-        params["replyMarkup"] = "none"
+    """Plain sendMessage via Telegram node (no dynamic inline keyboard)."""
     return {
         "id": nid(),
         "name": name,
@@ -79,8 +64,63 @@ def tg_send(
         "typeVersion": 1.2,
         "position": [x, y],
         "credentials": TG,
-        "parameters": params,
+        "parameters": {
+            "resource": "message",
+            "operation": "sendMessage",
+            "chatId": chat_id,
+            "text": text,
+            "additionalFields": {
+                "appendAttribution": False,
+                "parse_mode": "HTML",
+            },
+            "replyMarkup": "none",
+        },
         "onError": "continueRegularOutput",
+    }
+
+
+def tg_send_markup(name: str, x: int, y: int, *, item_expr: str) -> dict:
+    """sendMessage with optional reply_markup via Code+credentials.
+
+    n8n Telegram node ignores dynamic inlineKeyboard expressions (empty keyboard).
+    item_expr: JS expression returning { chat_id, out_text, keyboard? }.
+    """
+    js = f"""
+const item = {item_expr};
+const creds = await this.getCredentials('telegramApi');
+const base = String(creds.baseUrl || 'https://api.telegram.org').replace(/\\/$/, '');
+const token = creds.accessToken;
+if (!token) {{
+  throw new Error('telegramApi accessToken missing');
+}}
+const body = {{
+  chat_id: item.chat_id,
+  text: item.out_text,
+  parse_mode: 'HTML',
+  disable_web_page_preview: true,
+}};
+const kb = item.keyboard;
+if (kb && Array.isArray(kb.inline_keyboard) && kb.inline_keyboard.length) {{
+  body.reply_markup = kb;
+}}
+const res = await this.helpers.httpRequest({{
+  method: 'POST',
+  url: `${{base}}/bot${{token}}/sendMessage`,
+  headers: {{ 'Content-Type': 'application/json' }},
+  body,
+  json: true,
+}});
+return [{{ json: res }}];
+""".strip()
+    return {
+        "id": nid(),
+        "name": name,
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [x, y],
+        "credentials": TG,
+        "parameters": {"jsCode": js},
+        "continueOnFail": True,
     }
 
 
@@ -306,7 +346,7 @@ def format_courses_js(quiz_lib: str) -> str:
 const base = $('Run — Route').first().json;
 const courses = items.map((i) => i.json).filter((r) => r.id);
 if (!courses.length) {{
-  return [{{ json: {{ ...base, action: 'reply', out_text: 'Пока нет лекций с готовыми вопросами.', keyboard: null }} }}];
+  return [{{ json: {{ ...base, action: 'reply', out_text: 'Нет доступных курсов', keyboard: null }} }}];
 }}
 return [{{ json: {{
   ...base,
@@ -622,13 +662,11 @@ ORDER BY c.title;
     )
     nodes.append(code("Run — Format Courses", format_courses_js(quiz_lib), 1520, 1000))
     nodes.append(
-        tg_send(
+        tg_send_markup(
             "Out — Courses",
             1760,
             1000,
-            text="={{ $json.out_text }}",
-            chat_id="={{ $json.chat_id }}",
-            keyboard="={{ $json.keyboard }}",
+            item_expr="$input.first().json",
         )
     )
     nodes.append(tg_ack("Ack — Courses", 1760, 1120))
@@ -655,13 +693,11 @@ ORDER BY COALESCE(l.source_meta #>> '{drive,folder_path,0}', l.title, l.id::text
     )
     nodes.append(code("Run — Format Lectures", format_lectures_js(quiz_lib), 1520, 1240))
     nodes.append(
-        tg_send(
+        tg_send_markup(
             "Out — Lectures",
             1760,
             1240,
-            text="={{ $json.out_text }}",
-            chat_id="={{ $json.chat_id }}",
-            keyboard="={{ $json.keyboard }}",
+            item_expr="$input.first().json",
         )
     )
     nodes.append(tg_ack("Ack — Lectures", 1760, 1360))
@@ -761,13 +797,11 @@ RETURNING id;
     )
     nodes.append(code("Run — After Insert", after_insert_js(quiz_lib), 2000, 1560))
     nodes.append(
-        tg_send(
+        tg_send_markup(
             "Out — First Question",
             2240,
             1560,
-            text="={{ $json.out_text }}",
-            chat_id="={{ $json.chat_id }}",
-            keyboard="={{ $json.keyboard }}",
+            item_expr="$input.first().json",
         )
     )
     nodes.append(tg_ack("Ack — Start", 2240, 1680))
@@ -875,13 +909,11 @@ RETURNING id;
         )
     )
     nodes.append(
-        tg_send(
+        tg_send_markup(
             "Out — Feedback",
             2000,
             1880,
-            text="={{ $('Run — Grade Answer').item.json.out_text }}",
-            chat_id="={{ $('Run — Grade Answer').item.json.chat_id }}",
-            keyboard="={{ $('Run — Grade Answer').item.json.keyboard }}",
+            item_expr="$('Run — Grade Answer').first().json",
         )
     )
     nodes.append(tg_ack("Ack — Answer", 2000, 2000))
@@ -952,13 +984,11 @@ RETURNING id, status;
         )
     )
     nodes.append(
-        tg_send(
+        tg_send_markup(
             "Out — Next Or Summary",
             2000,
             2200,
-            text="={{ $('Run — Next Step').item.json.out_text }}",
-            chat_id="={{ $('Run — Next Step').item.json.chat_id }}",
-            keyboard="={{ $('Run — Next Step').item.json.keyboard }}",
+            item_expr="$('Run — Next Step').first().json",
         )
     )
     nodes.append(tg_ack("Ack — Next", 2000, 2320))
@@ -990,9 +1020,31 @@ RETURNING id, status;
         ):
             n["alwaysOutputData"] = True
 
-    workflow_id = ensure_workflow(WF_NAME, nodes, connections)
+    local_only = "--local" in sys.argv
     # Strip instance-local trigger path ids before writing JSON to git.
     _path_key = "web" + "hookId"
+    for node in nodes:
+        node.pop(_path_key, None)
+
+    if local_only:
+        id_path = WORKFLOWS / f"{SLUG}.id"
+        workflow_id = id_path.read_text(encoding="utf-8").strip() if id_path.exists() else "local"
+        save_local(SLUG, workflow_id, WF_NAME, nodes, connections)
+        print(
+            json.dumps(
+                {
+                    "action": "exported_local",
+                    "id": workflow_id,
+                    "name": WF_NAME,
+                    "version": WF_VER,
+                    "nodes": len(nodes),
+                },
+                ensure_ascii=False,
+            )
+        )
+        return workflow_id
+
+    workflow_id = ensure_workflow(WF_NAME, nodes, connections)
     for node in nodes:
         node.pop(_path_key, None)
     save_local(SLUG, workflow_id, WF_NAME, nodes, connections)

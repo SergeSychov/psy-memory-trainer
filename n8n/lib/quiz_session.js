@@ -134,16 +134,15 @@ function formatQuestionMessage(question, index, total) {
   return lines.join('\n');
 }
 
+/** Telegram Bot API reply_markup shape (not n8n Telegram-node fixedCollection). */
 function inlineKeyboardRows(buttonsRows) {
   return {
-    rows: buttonsRows.map((row) => ({
-      row: {
-        buttons: row.map((btn) => ({
-          text: btn.text,
-          additionalFields: { callback_data: btn.callback_data },
-        })),
-      },
-    })),
+    inline_keyboard: (buttonsRows || []).map((row) =>
+      (row || []).map((btn) => ({
+        text: String(btn.text || ''),
+        callback_data: String(btn.callback_data || ''),
+      })),
+    ),
   };
 }
 
