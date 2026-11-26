@@ -9,6 +9,13 @@ const {
   formatQuestionMessage,
   lectureLabel,
   parseCallback,
+  parseStartPayload,
+  inviteRefusal,
+  inviteRefusalText,
+  welcomeText,
+  buildInviteLink,
+  buildInviteCoursesPage,
+  buildInvitesListPage,
   tallyAnswer,
   ratingForAnswer,
   computeResponseMs,
@@ -278,4 +285,79 @@ test('coursesKeyboard / choiceKeyboard use Telegram inline_keyboard shape', () =
     ['A', 'B', 'C', 'D'],
   );
   assert.equal(choices.inline_keyboard[0][1].callback_data, 'ans:sid:B');
+});
+
+test('parseStartPayload handles plain, invite, bot suffix, bad code', () => {
+  assert.deepEqual(parseStartPayload('/start'), { kind: 'plain' });
+  assert.deepEqual(parseStartPayload('/start@natasha_study_bot'), { kind: 'plain' });
+  assert.deepEqual(parseStartPayload('/start Abcd_1234'), {
+    kind: 'invite',
+    code: 'Abcd_1234',
+  });
+  assert.deepEqual(parseStartPayload('/start@bot Abcd_1234'), {
+    kind: 'invite',
+    code: 'Abcd_1234',
+  });
+  assert.equal(parseStartPayload('/start bad!').kind, 'bad_code');
+  assert.equal(parseStartPayload('/start short').kind, 'bad_code');
+});
+
+test('inviteRefusal and texts cover lifecycle', () => {
+  assert.equal(inviteRefusal(null), 'not_found');
+  assert.equal(inviteRefusal({ id: '1', revoked_at: '2026-01-01' }), 'revoked');
+  assert.equal(
+    inviteRefusal({ id: '1', expires_at: '2020-01-01T00:00:00.000Z' }, '2026-01-01'),
+    'expired',
+  );
+  assert.equal(inviteRefusal({ id: '1', max_uses: 2, uses_count: 2 }), 'exhausted');
+  assert.equal(inviteRefusal({ id: '1', max_uses: 2, uses_count: 1 }), null);
+  assert.match(inviteRefusalText('revoked'), /отозвано/i);
+  assert.match(inviteRefusalText('expired'), /истёк/i);
+  assert.match(inviteRefusalText('exhausted'), /максимальное/i);
+  assert.match(inviteRefusalText('not_found'), /не найдено/i);
+  assert.match(inviteRefusalText('bad_code'), /Некорректный/i);
+});
+
+test('welcomeText and buildInviteLink', () => {
+  assert.match(welcomeText({ isNew: true }), /пространство/i);
+  assert.match(welcomeText({ isNew: false }), /Снова/i);
+  assert.match(
+    welcomeText({ joinedCourse: true, courseTitle: 'Тест' }),
+    /подключены к курсу «Тест»/,
+  );
+  const link = buildInviteLink('natasha_study_bot', 'Abcd1234_xy');
+  assert.equal(link, 'https://t.me/natasha_study_bot?start=Abcd1234_xy');
+  assert.equal(buildInviteLink('bot', 'short'), null);
+  assert.ok(Buffer.byteLength('Abcd1234_xy', 'utf8') <= 64);
+});
+
+test('invite course/revoke callbacks stay within 64 bytes', () => {
+  assert.deepEqual(parseCallback(`inv:course:${UUID}`), {
+    kind: 'inv_course',
+    courseId: UUID,
+  });
+  assert.deepEqual(parseCallback(`inv:revoke:${UUID}`), {
+    kind: 'inv_revoke',
+    inviteId: UUID,
+  });
+  assert.ok(Buffer.byteLength(`inv:course:${UUID}`, 'utf8') <= 64);
+  assert.ok(Buffer.byteLength(`inv:revoke:${UUID}`, 'utf8') <= 64);
+
+  const page = buildInviteCoursesPage(
+    [
+      { id: 'c1', title: 'A' },
+      { id: 'c2', title: 'B' },
+      { id: 'c3', title: 'C' },
+    ],
+    0,
+  );
+  assert.equal(page.keyboard.inline_keyboard[0][0].callback_data, 'inv:course:c1');
+  assert.equal(page.keyboard.inline_keyboard[COURSE_PAGE_SIZE][1].callback_data, 'page:invcourses:2');
+
+  const list = buildInvitesListPage(
+    [{ id: UUID, course_title: 'Курс', uses_count: 1, max_uses: null, expires_at: null }],
+    0,
+  );
+  assert.equal(list.keyboard.inline_keyboard[0][0].callback_data, `inv:revoke:${UUID}`);
+  assert.match(list.out_text, /Активные приглашения/);
 });

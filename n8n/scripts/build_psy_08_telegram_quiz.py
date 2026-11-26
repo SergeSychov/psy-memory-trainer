@@ -21,8 +21,9 @@ LIB = REPO / "n8n" / "lib"
 
 TG = {"telegramApi": {"id": "xxaZ5HTQ7zihMvte", "name": "TelegramStudy"}}
 WF_NAME = "psy_08_telegram_quiz"
-WF_VER = "psy_08_telegram_quiz_v1"
+WF_VER = "psy_08_telegram_quiz_v2"
 SLUG = "psy_08_telegram_quiz"
+BOT_USERNAME = "natasha_study_bot"
 
 
 def load_quiz_js() -> str:
@@ -222,6 +223,19 @@ let command = '';
 if (text.startsWith('/')) {
   command = text.split(/\s+/)[0].split('@')[0].toLowerCase();
 }
+// Lightweight /start parse (full rules also in quiz_session.parseStartPayload).
+let start_payload = { kind: 'not_start' };
+if (command === '/start') {
+  const parts = text.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) {
+    start_payload = { kind: 'plain' };
+  } else {
+    const code = parts.slice(1).join('');
+    start_payload = /^[A-Za-z0-9_-]{8,64}$/.test(code)
+      ? { kind: 'invite', code }
+      : { kind: 'bad_code' };
+  }
+}
 return [{
   json: {
     update_type: cq ? 'callback' : 'message',
@@ -229,6 +243,8 @@ return [{
     chat_id: chat.id || (from.id || null),
     text,
     command,
+    start_payload,
+    from_first_name: from.first_name || null,
     callback_data,
     callback_query_id,
     from_username: from.username || null,
@@ -244,9 +260,12 @@ def route_js(quiz_lib: str) -> str:
 
 const norm = $('Run — Normalize').first().json;
 const userRow = $input.first().json;
-const allowed = userRow.allowed === true || userRow.allowed === 't' || userRow.allowed === true;
+const known = !!(userRow.user_id);
 const userId = userRow.user_id || null;
 const displayName = userRow.display_name || null;
+const isSystemAdmin = userRow.is_system_admin === true || userRow.is_system_admin === 't';
+const workspaceId = userRow.workspace_id || null;
+const ownedCoursesCount = Number(userRow.owned_courses_count || 0);
 const session = {{
   id: userRow.session_id || null,
   status: userRow.session_status || null,
@@ -273,45 +292,59 @@ const base = {{
   callback_query_id: norm.callback_query_id,
   user_id: userId,
   display_name: displayName,
+  is_system_admin: isSystemAdmin,
+  workspace_id: workspaceId,
+  owned_courses_count: ownedCoursesCount,
   session,
   has_callback: !!norm.callback_query_id,
+  from_first_name: norm.from_first_name || null,
 }};
 
 function reply(action, text, extra = {{}}) {{
   return [{{ json: {{ ...base, action, out_text: text, keyboard: null, ...extra }} }}];
-}}
-function replyKb(action, text, keyboard, extra = {{}}) {{
-  return [{{ json: {{ ...base, action, out_text: text, keyboard, ...extra }} }}];
 }}
 
 if (!norm.telegram_user_id || !norm.chat_id) {{
   return reply('noop', '');
 }}
 
-if (!allowed) {{
-  if (norm.command === '/start' || norm.command === '/quiz' || norm.command === '/help' || norm.command === '/stop') {{
-    return reply('pending_reg',
-      'Здравствуйте! Бот пока доступен только участникам курса. Мы получили ваш запрос на доступ — дождитесь подтверждения и напишите /start ещё раз.');
+const startInfo = norm.start_payload || parseStartPayload(norm.text || '');
+const openStatuses = new Set(['picking_course','picking_lecture','active','awaiting_next']);
+const hasOpen = !!(session.id && openStatuses.has(session.status));
+const isOwner = ownedCoursesCount > 0;
+
+if (!known) {{
+  if (norm.command === '/start') {{
+    if (startInfo.kind === 'bad_code') {{
+      return reply('help', inviteRefusalText('bad_code'));
+    }}
+    return reply('ensure_user', '', {{
+      invite_code: startInfo.kind === 'invite' ? startInfo.code : null,
+      from_first_name: norm.from_first_name || '',
+    }});
   }}
   if (norm.update_type === 'callback') {{
     return reply('noop', '');
   }}
-  return reply('refuse',
-    'Извините, этот бот доступен только студентам курса. Если вы Наталья или Сергей — напишите Сергею для доступа.');
+  return reply('help', 'Напишите /start');
 }}
 
-const openStatuses = new Set(['picking_course','picking_lecture','active','awaiting_next']);
-const hasOpen = !!(session.id && openStatuses.has(session.status));
-
 if (norm.command === '/start') {{
-  const name = displayName || 'студент';
-  return reply('welcome',
-    `Привет, ${{name}}!\\n\\nКоманды:\\n/quiz — квиз по лекции (10 вопросов)\\n/stop — прервать текущую сессию\\n/help — справка`);
+  if (startInfo.kind === 'bad_code') {{
+    return reply('help', inviteRefusalText('bad_code'));
+  }}
+  if (startInfo.kind === 'invite') {{
+    return reply('redeem_invite', '', {{ invite_code: startInfo.code }});
+  }}
+  return reply('welcome', welcomeText({{ isNew: false }}));
 }}
 
 if (norm.command === '/help') {{
-  return reply('help',
-    'Квиз без подсказок модели: вопросы уже в базе.\\n/quiz — выбрать курс и лекцию\\n/stop — остановить сессию\\nОтветы — кнопками A–D.');
+  let text = 'Квиз без подсказок модели: вопросы уже в базе.\\n/quiz — выбрать курс и лекцию\\n/stop — остановить сессию\\nОтветы — кнопками A–D.';
+  if (isOwner) {{
+    text += '\\n/invite — ссылка-приглашение в свой курс\\n/invites — активные приглашения и отзыв';
+  }}
+  return reply('help', text);
 }}
 
 if (norm.command === '/stop') {{
@@ -328,6 +361,20 @@ if (norm.command === '/quiz') {{
   return reply('pick_course', 'Выберите курс:', {{ course_offset: 0 }});
 }}
 
+if (norm.command === '/invite') {{
+  if (!isOwner) {{
+    return reply('help', 'Команда доступна владельцу курса.');
+  }}
+  return reply('invite_pick', 'Выберите курс для приглашения:', {{ invite_course_offset: 0 }});
+}}
+
+if (norm.command === '/invites') {{
+  if (!isOwner) {{
+    return reply('help', 'Команда доступна владельцу курса.');
+  }}
+  return reply('invites_list', '', {{ invites_offset: 0 }});
+}}
+
 if (norm.update_type === 'callback') {{
   if (session.last_callback_id && norm.callback_query_id && session.last_callback_id === norm.callback_query_id) {{
     return reply('noop', '');
@@ -339,11 +386,27 @@ if (norm.update_type === 'callback') {{
   if (cb.kind === 'page_courses') {{
     return reply('pick_course', 'Выберите курс:', {{ course_offset: cb.offset }});
   }}
+  if (cb.kind === 'page_inv_courses') {{
+    if (!isOwner) return reply('help', 'Команда доступна владельцу курса.');
+    return reply('invite_pick', 'Выберите курс для приглашения:', {{ invite_course_offset: cb.offset }});
+  }}
+  if (cb.kind === 'page_invites') {{
+    if (!isOwner) return reply('help', 'Команда доступна владельцу курса.');
+    return reply('invites_list', '', {{ invites_offset: cb.offset }});
+  }}
   if (cb.kind === 'page_lectures') {{
     return reply('pick_lecture', 'Выберите лекцию:', {{
       course_id: cb.courseId,
       lecture_offset: cb.offset,
     }});
+  }}
+  if (cb.kind === 'inv_course') {{
+    if (!isOwner) return reply('help', 'Команда доступна владельцу курса.');
+    return reply('invite_create', '', {{ course_id: cb.courseId }});
+  }}
+  if (cb.kind === 'inv_revoke') {{
+    if (!isOwner) return reply('help', 'Команда доступна владельцу курса.');
+    return reply('invite_revoke', '', {{ invite_id: cb.inviteId }});
   }}
   if (cb.kind === 'course') {{
     return reply('pick_lecture', 'Выберите лекцию:', {{
@@ -379,7 +442,7 @@ if (norm.update_type === 'callback') {{
 }}
 
 return reply('help',
-  'Не понял сообщение. Команды: /quiz, /stop, /help');
+  'Не понял сообщение. Команды: /start, /quiz, /stop, /help');
 """
 
 
@@ -394,7 +457,7 @@ def format_courses_js(quiz_lib: str) -> str:
 const base = $('Run — Route').first().json;
 const courses = items.map((i) => i.json).filter((r) => r.id);
 if (!courses.length) {{
-  return [{{ json: {{ ...base, action: 'reply', out_text: 'Нет доступных курсов', keyboard: null, kb_rows: 0 }} }}];
+  return [{{ json: {{ ...base, action: 'reply', out_text: 'Пока нет доступных курсов. Загрузка своих материалов скоро; если есть ссылка-приглашение — откройте её', keyboard: null, kb_rows: 0 }} }}];
 }}
 const built = buildCoursesPage(courses, base.course_offset || 0);
 return [{{ json: {{
@@ -587,11 +650,11 @@ def build() -> str:
     nodes.append(
         sticky(
             "NOTE — Quiz",
-            f"## {WF_NAME}\n`{WF_VER}`\nWhitelist = `psy.users`.\nНет LLM. Activate only this WF.",
+            f"## {WF_NAME}\n`{WF_VER}`\nSelf-serve /start + workspaces/invites.\nНет LLM. Activate only this WF.",
             -400,
             200,
-            360,
-            200,
+            420,
+            220,
             4,
         )
     )
@@ -604,9 +667,15 @@ def build() -> str:
             """
 SELECT
   ($1::bigint) AS telegram_user_id,
-  (u.id IS NOT NULL) AS allowed,
   u.id AS user_id,
   u.display_name,
+  COALESCE(u.is_system_admin, false) AS is_system_admin,
+  w.id AS workspace_id,
+  (
+    SELECT count(*)::int
+    FROM psy.courses c
+    WHERE c.workspace_id = w.id
+  ) AS owned_courses_count,
   s.id AS session_id,
   s.status AS session_status,
   s.lecture_id AS session_lecture_id,
@@ -620,6 +689,7 @@ SELECT
   s.last_callback_id AS session_last_callback_id
 FROM (SELECT 1) AS _
 LEFT JOIN psy.users u ON u.telegram_user_id = $1::bigint
+LEFT JOIN psy.workspaces w ON w.owner_user_id = u.id
 LEFT JOIN LATERAL (
   SELECT *
   FROM psy.quiz_sessions qs
@@ -638,13 +708,17 @@ LEFT JOIN LATERAL (
     nodes.append(code("Run — Route", route_js(quiz_lib), 720, 300))
 
     cases = [
-        "pending_reg",
-        "refuse",
         "welcome",
         "help",
         "busy",
         "stop",
         "stop_idle",
+        "ensure_user",
+        "redeem_invite",
+        "invite_pick",
+        "invite_create",
+        "invites_list",
+        "invite_revoke",
         "pick_course",
         "pick_lecture",
         "start_quiz",
@@ -657,9 +731,7 @@ LEFT JOIN LATERAL (
 
     # Shared simple replies
     y_simple = 0
-    for i, action in enumerate(
-        ["pending_reg", "refuse", "welcome", "help", "busy", "stop_idle"]
-    ):
+    for i, action in enumerate(["welcome", "help", "busy", "stop_idle"]):
         send = tg_send(
             f"Out — {action}",
             1280,
@@ -683,7 +755,7 @@ WHERE id = $1::uuid
 RETURNING id;
 """.strip(),
             1280,
-            780,
+            560,
             query_replacement="={{ [$json.stop_session_id, $json.user_id] }}",
         )
     )
@@ -691,13 +763,530 @@ RETURNING id;
         tg_send(
             "Out — stop",
             1520,
-            780,
+            560,
             text="={{ $('Run — Route').item.json.out_text }}",
             chat_id="={{ $('Run — Route').item.json.chat_id }}",
         )
     )
     link(connections, "Run — Switch Action", "DB — Stop Session", src_output=cases.index("stop"))
     link(connections, "DB — Stop Session", "Out — stop")
+
+    # ensure_user (+ optional redeem)
+    nodes.append(
+        pg(
+            "DB — Ensure User",
+            """
+WITH ups AS (
+  INSERT INTO psy.users (telegram_user_id, display_name)
+  VALUES ($1::bigint, NULLIF(BTRIM($2::text), ''))
+  ON CONFLICT (telegram_user_id) DO UPDATE
+    SET telegram_user_id = EXCLUDED.telegram_user_id
+  RETURNING id, display_name, (xmax = 0) AS is_new
+),
+ins_ws AS (
+  INSERT INTO psy.workspaces (owner_user_id)
+  SELECT id FROM ups
+  ON CONFLICT (owner_user_id) DO NOTHING
+  RETURNING id
+)
+SELECT
+  ups.id AS user_id,
+  ups.display_name,
+  ups.is_new,
+  COALESCE(
+    (SELECT w.id FROM psy.workspaces w WHERE w.owner_user_id = ups.id LIMIT 1),
+    (SELECT id FROM ins_ws LIMIT 1)
+  ) AS workspace_id
+FROM ups;
+""".strip(),
+            1280,
+            680,
+            query_replacement=(
+                "={{ [$json.telegram_user_id, $json.from_first_name || ''] }}"
+            ),
+        )
+    )
+    nodes.append(
+        code(
+            "Run — After Ensure",
+            f"""
+{quiz_lib}
+const route = $('Run — Route').first().json;
+const row = $input.first().json || {{}};
+const isNew = row.is_new === true || row.is_new === 't' || row.is_new === true;
+const inviteCode = route.invite_code || null;
+return [{{ json: {{
+  ...route,
+  user_id: row.user_id || route.user_id,
+  display_name: row.display_name || route.display_name,
+  workspace_id: row.workspace_id || route.workspace_id,
+  is_new: isNew,
+  invite_code: inviteCode,
+  action: inviteCode ? 'redeem_invite' : 'welcome',
+  out_text: inviteCode ? '' : welcomeText({{ isNew }}),
+  keyboard: null,
+}} }}];
+""",
+            1520,
+            680,
+        )
+    )
+    nodes.append(
+        iff(
+            "IF — Ensure Has Invite",
+            "={{ String($json.invite_code || '') }}",
+            "",
+            1640,
+            680,
+            op="notEquals",
+        )
+    )
+    nodes.append(
+        tg_send(
+            "Out — Ensure Welcome",
+            1880,
+            560,
+            text="={{ $json.out_text }}",
+            chat_id="={{ $json.chat_id }}",
+        )
+    )
+    link(connections, "Run — Switch Action", "DB — Ensure User", src_output=cases.index("ensure_user"))
+    link(connections, "DB — Ensure User", "Run — After Ensure")
+    link(connections, "Run — After Ensure", "IF — Ensure Has Invite")
+    link(connections, "IF — Ensure Has Invite", "DB — Redeem Invite", src_output=0)
+    link(connections, "IF — Ensure Has Invite", "Out — Ensure Welcome", src_output=1)
+
+    # redeem_invite
+    nodes.append(
+        pg(
+            "DB — Redeem Invite",
+            """
+WITH params AS (
+  SELECT
+    $1::uuid AS user_id,
+    encode(extensions.digest($2::text, 'sha256'), 'hex') AS code_hash
+),
+inv AS (
+  SELECT i.*
+  FROM psy.invites i
+  JOIN params p ON i.code_hash = p.code_hash
+),
+already AS (
+  SELECT
+    inv.id AS invite_id,
+    inv.course_id,
+    c.title AS course_title
+  FROM inv
+  JOIN params p ON TRUE
+  JOIN psy.courses c ON c.id = inv.course_id
+  JOIN psy.workspaces w ON w.id = c.workspace_id
+  WHERE w.owner_user_id = p.user_id
+     OR EXISTS (
+       SELECT 1 FROM psy.course_members cm
+       WHERE cm.course_id = inv.course_id AND cm.user_id = p.user_id
+     )
+),
+bump AS (
+  UPDATE psy.invites i
+  SET uses_count = i.uses_count + 1
+  FROM inv, params p
+  WHERE i.id = inv.id
+    AND i.revoked_at IS NULL
+    AND (i.expires_at IS NULL OR i.expires_at > now())
+    AND (i.max_uses IS NULL OR i.uses_count < i.max_uses)
+    AND NOT EXISTS (SELECT 1 FROM already)
+  RETURNING i.id, i.course_id
+),
+mem AS (
+  INSERT INTO psy.course_members (course_id, user_id, role, invite_id)
+  SELECT b.course_id, p.user_id, 'student', b.id
+  FROM bump b
+  CROSS JOIN params p
+  ON CONFLICT (course_id, user_id) DO NOTHING
+  RETURNING course_id, invite_id
+)
+SELECT
+  (already.invite_id IS NOT NULL OR mem.course_id IS NOT NULL) AS ok,
+  (already.invite_id IS NOT NULL) AS already_member,
+  (mem.course_id IS NOT NULL) AS redeemed,
+  COALESCE(already.course_id, mem.course_id, inv.course_id) AS course_id,
+  COALESCE(already.course_title, c.title) AS course_title,
+  inv.id AS invite_id,
+  inv.revoked_at,
+  inv.expires_at,
+  inv.max_uses,
+  inv.uses_count,
+  (inv.id IS NULL) AS missing
+FROM params
+LEFT JOIN inv ON TRUE
+LEFT JOIN already ON TRUE
+LEFT JOIN mem ON TRUE
+LEFT JOIN psy.courses c ON c.id = COALESCE(mem.course_id, inv.course_id);
+""".strip(),
+            1760,
+            780,
+            query_replacement=(
+                "={{ ["
+                "($json.user_id || $('Run — Route').item.json.user_id), "
+                "($json.invite_code || $('Run — Route').item.json.invite_code)"
+                "] }}"
+            ),
+        )
+    )
+    nodes.append(
+        code(
+            "Run — Format Redeem",
+            f"""
+{quiz_lib}
+const route = $('Run — Route').first().json;
+const ensured = (() => {{
+  try {{ return $('Run — After Ensure').first().json; }} catch (_e) {{ return null; }}
+}})();
+const base = ensured && ensured.user_id ? ensured : route;
+const row = $input.first().json || {{}};
+let out_text;
+if (row.ok === true || row.ok === 't') {{
+  out_text = welcomeText({{
+    joinedCourse: true,
+    courseTitle: row.course_title || '',
+  }});
+}} else if (row.missing === true || row.missing === 't' || !row.invite_id) {{
+  out_text = inviteRefusalText('not_found');
+}} else {{
+  out_text = inviteRefusalText(inviteRefusal({{
+    id: row.invite_id,
+    revoked_at: row.revoked_at,
+    expires_at: row.expires_at,
+    max_uses: row.max_uses,
+    uses_count: row.uses_count,
+  }}) || 'not_found');
+}}
+return [{{ json: {{
+  ...base,
+  action: 'reply',
+  out_text,
+  keyboard: null,
+}} }}];
+""",
+            2000,
+            780,
+        )
+    )
+    nodes.append(
+        tg_send(
+            "Out — Redeem",
+            2240,
+            780,
+            text="={{ $json.out_text }}",
+            chat_id="={{ $json.chat_id }}",
+        )
+    )
+    link(connections, "Run — Switch Action", "DB — Redeem Invite", src_output=cases.index("redeem_invite"))
+    link(connections, "DB — Redeem Invite", "Run — Format Redeem")
+    link(connections, "Run — Format Redeem", "Out — Redeem")
+
+    # /invite — pick owned course
+    nodes.append(
+        pg(
+            "Load — Owned Courses",
+            """
+SELECT c.id, c.title
+FROM psy.courses c
+JOIN psy.workspaces w ON w.id = c.workspace_id
+WHERE w.owner_user_id = $1::uuid
+ORDER BY c.title;
+""".strip(),
+            1280,
+            900,
+            query_replacement="={{ [$json.user_id] }}",
+        )
+    )
+    nodes.append(
+        code(
+            "Run — Format Invite Courses",
+            f"""
+{quiz_lib}
+const base = $('Run — Route').first().json;
+const courses = items.map((i) => i.json).filter((r) => r.id);
+if (!courses.length) {{
+  return [{{ json: {{
+    ...base,
+    action: 'reply',
+    out_text: 'У вас пока нет своих курсов.',
+    keyboard: null,
+    kb_rows: 0,
+  }} }}];
+}}
+const built = buildInviteCoursesPage(courses, base.invite_course_offset || 0);
+return [{{ json: {{
+  ...base,
+  action: 'reply',
+  out_text: built.out_text,
+  keyboard: built.keyboard,
+  kb_rows: built.kb_rows,
+}} }}];
+""",
+            1520,
+            900,
+        )
+    )
+    nodes.append(
+        iff(
+            "IF — Has Invite Courses",
+            "={{ String($json.kb_rows || 0) }}",
+            "0",
+            1640,
+            900,
+            op="notEquals",
+        )
+    )
+    nodes.append(
+        tg_send(
+            "Out — No Invite Courses",
+            1760,
+            820,
+            text="={{ $json.out_text }}",
+            chat_id="={{ $json.chat_id }}",
+        )
+    )
+    nodes.append(
+        tg_send_markup(
+            "Out — Invite Courses",
+            1760,
+            900,
+            item_expr="$json",
+            n_rows=COURSE_PAGE_SIZE,
+            paged=True,
+        )
+    )
+    nodes.append(tg_ack("Ack — Invite Courses", 1760, 980))
+    link(connections, "Run — Switch Action", "Load — Owned Courses", src_output=cases.index("invite_pick"))
+    link(connections, "Load — Owned Courses", "Run — Format Invite Courses")
+    link(connections, "Run — Format Invite Courses", "IF — Has Invite Courses")
+    link(connections, "IF — Has Invite Courses", "Out — Invite Courses", src_output=0)
+    link(connections, "IF — Has Invite Courses", "Out — No Invite Courses", src_output=1)
+    link(connections, "Run — Format Invite Courses", "Ack — Invite Courses")
+
+    # create invite (plaintext code returned once; not logged elsewhere)
+    nodes.append(
+        pg(
+            "DB — Create Invite",
+            """
+WITH gen AS (
+  SELECT translate(encode(extensions.gen_random_bytes(12), 'base64'), '+/=', '-_') AS code
+),
+owned AS (
+  SELECT c.id, c.title
+  FROM psy.courses c
+  JOIN psy.workspaces w ON w.id = c.workspace_id
+  WHERE c.id = $1::uuid AND w.owner_user_id = $2::uuid
+),
+ins AS (
+  INSERT INTO psy.invites (course_id, created_by, code_hash, expires_at)
+  SELECT owned.id, $2::uuid, encode(extensions.digest(gen.code, 'sha256'), 'hex'), now() + interval '30 days'
+  FROM owned
+  CROSS JOIN gen
+  RETURNING id, course_id, expires_at, uses_count, max_uses
+)
+SELECT
+  ins.id AS invite_id,
+  ins.course_id,
+  owned.title AS course_title,
+  ins.expires_at,
+  gen.code AS invite_code
+FROM ins
+JOIN owned ON owned.id = ins.course_id
+CROSS JOIN gen;
+""".strip(),
+            1280,
+            1060,
+            query_replacement="={{ [$json.course_id, $json.user_id] }}",
+        )
+    )
+    nodes.append(
+        code(
+            "Run — Format Invite Link",
+            f"""
+{quiz_lib}
+const base = $('Run — Route').first().json;
+const row = $input.first().json || {{}};
+const code = row.invite_code || '';
+const link = buildInviteLink('{BOT_USERNAME}', code);
+let out_text;
+if (!link) {{
+  out_text = 'Не удалось создать приглашение. Проверьте, что курс ваш, и попробуйте ещё раз.';
+}} else {{
+  out_text = 'Ссылка-приглашение (сохраните, повторно не покажу):\\n' + link +
+    '\\n\\nСрок: 30 дней. Участник открывает ссылку и пишет /start.';
+}}
+return [{{ json: {{
+  ...base,
+  action: 'reply',
+  out_text,
+  keyboard: null,
+}} }}];
+""",
+            1520,
+            1060,
+        )
+    )
+    nodes.append(
+        tg_send(
+            "Out — Invite Link",
+            1760,
+            1060,
+            text="={{ $json.out_text }}",
+            chat_id="={{ $json.chat_id }}",
+        )
+    )
+    nodes.append(tg_ack("Ack — Invite Create", 1760, 1140))
+    link(connections, "Run — Switch Action", "DB — Create Invite", src_output=cases.index("invite_create"))
+    link(connections, "DB — Create Invite", "Run — Format Invite Link")
+    link(connections, "Run — Format Invite Link", "Out — Invite Link")
+    link(connections, "Run — Format Invite Link", "Ack — Invite Create")
+
+    # /invites list + revoke
+    nodes.append(
+        pg(
+            "Load — Invites",
+            """
+SELECT
+  i.id,
+  i.uses_count,
+  i.max_uses,
+  i.expires_at,
+  c.title AS course_title
+FROM psy.invites i
+JOIN psy.courses c ON c.id = i.course_id
+JOIN psy.workspaces w ON w.id = c.workspace_id
+WHERE w.owner_user_id = $1::uuid
+  AND i.revoked_at IS NULL
+  AND (i.expires_at IS NULL OR i.expires_at > now())
+  AND (i.max_uses IS NULL OR i.uses_count < i.max_uses)
+ORDER BY i.created_at DESC;
+""".strip(),
+            1280,
+            1220,
+            query_replacement="={{ [$json.user_id] }}",
+        )
+    )
+    nodes.append(
+        code(
+            "Run — Format Invites",
+            f"""
+{quiz_lib}
+const base = $('Run — Route').first().json;
+const invites = items.map((i) => i.json).filter((r) => r.id);
+if (!invites.length) {{
+  return [{{ json: {{
+    ...base,
+    action: 'reply',
+    out_text: 'Активных приглашений нет. Создайте: /invite',
+    keyboard: null,
+    kb_rows: 0,
+  }} }}];
+}}
+const built = buildInvitesListPage(invites, base.invites_offset || 0);
+return [{{ json: {{
+  ...base,
+  action: 'reply',
+  out_text: built.out_text,
+  keyboard: built.keyboard,
+  kb_rows: built.kb_rows,
+}} }}];
+""",
+            1520,
+            1220,
+        )
+    )
+    nodes.append(
+        iff(
+            "IF — Has Invites Kb",
+            "={{ String($json.kb_rows || 0) }}",
+            "0",
+            1640,
+            1220,
+            op="notEquals",
+        )
+    )
+    nodes.append(
+        tg_send(
+            "Out — Invites Text",
+            1760,
+            1160,
+            text="={{ $json.out_text }}",
+            chat_id="={{ $json.chat_id }}",
+        )
+    )
+    nodes.append(
+        tg_send_markup(
+            "Out — Invites",
+            1760,
+            1220,
+            item_expr="$json",
+            n_rows=LECTURE_PAGE_SIZE,
+            paged=True,
+        )
+    )
+    nodes.append(tg_ack("Ack — Invites", 1760, 1300))
+    link(connections, "Run — Switch Action", "Load — Invites", src_output=cases.index("invites_list"))
+    link(connections, "Load — Invites", "Run — Format Invites")
+    link(connections, "Run — Format Invites", "IF — Has Invites Kb")
+    link(connections, "IF — Has Invites Kb", "Out — Invites", src_output=0)
+    link(connections, "IF — Has Invites Kb", "Out — Invites Text", src_output=1)
+    link(connections, "Run — Format Invites", "Ack — Invites")
+
+    nodes.append(
+        pg(
+            "DB — Revoke Invite",
+            """
+UPDATE psy.invites i
+SET revoked_at = now()
+FROM psy.courses c
+JOIN psy.workspaces w ON w.id = c.workspace_id
+WHERE i.id = $1::uuid
+  AND i.course_id = c.id
+  AND w.owner_user_id = $2::uuid
+  AND i.revoked_at IS NULL
+RETURNING i.id;
+""".strip(),
+            1280,
+            1380,
+            query_replacement="={{ [$json.invite_id, $json.user_id] }}",
+        )
+    )
+    nodes.append(
+        code(
+            "Run — Format Revoke",
+            """
+const base = $('Run — Route').first().json;
+const row = $input.first().json || {};
+const ok = !!(row.id || row.invite_id);
+return [{ json: {
+  ...base,
+  action: 'reply',
+  out_text: ok ? 'Приглашение отозвано.' : 'Не удалось отозвать (нет доступа или уже отозвано).',
+  keyboard: null,
+}}];
+""",
+            1520,
+            1380,
+        )
+    )
+    nodes.append(
+        tg_send(
+            "Out — Revoke",
+            1760,
+            1380,
+            text="={{ $json.out_text }}",
+            chat_id="={{ $json.chat_id }}",
+        )
+    )
+    nodes.append(tg_ack("Ack — Revoke", 1760, 1460))
+    link(connections, "Run — Switch Action", "DB — Revoke Invite", src_output=cases.index("invite_revoke"))
+    link(connections, "DB — Revoke Invite", "Run — Format Revoke")
+    link(connections, "Run — Format Revoke", "Out — Revoke")
+    link(connections, "Run — Format Revoke", "Ack — Revoke")
 
     # pick_course
     nodes.append(
@@ -706,14 +1295,22 @@ RETURNING id;
             """
 SELECT c.id, c.title
 FROM psy.courses c
-WHERE EXISTS (
+WHERE (
+  c.workspace_id IN (SELECT w.id FROM psy.workspaces w WHERE w.owner_user_id = $1::uuid)
+  OR EXISTS (
+    SELECT 1 FROM psy.course_members cm
+    WHERE cm.course_id = c.id AND cm.user_id = $1::uuid
+  )
+)
+AND EXISTS (
   SELECT 1 FROM psy.lectures l
   WHERE l.course_id = c.id AND l.status = 'questions_ready'
 )
 ORDER BY c.title;
 """.strip(),
             1280,
-            1000,
+            1560,
+            query_replacement="={{ [$json.user_id] }}",
         )
     )
     nodes.append(code("Run — Format Courses", format_courses_js(quiz_lib), 1520, 1000))
@@ -762,13 +1359,21 @@ ORDER BY c.title;
             """
 SELECT l.id, l.title, l.source_meta, l.status
 FROM psy.lectures l
+JOIN psy.courses c ON c.id = l.course_id
 WHERE l.course_id = $1::uuid
   AND l.status = 'questions_ready'
+  AND (
+    c.workspace_id IN (SELECT w.id FROM psy.workspaces w WHERE w.owner_user_id = $2::uuid)
+    OR EXISTS (
+      SELECT 1 FROM psy.course_members cm
+      WHERE cm.course_id = c.id AND cm.user_id = $2::uuid
+    )
+  )
 ORDER BY COALESCE(l.source_meta #>> '{drive,folder_path,0}', l.title, l.id::text);
 """.strip(),
             1280,
-            1240,
-            query_replacement="={{ [$json.course_id] }}",
+            1700,
+            query_replacement="={{ [$json.course_id, $json.user_id] }}",
         )
     )
     nodes.append(code("Run — Format Lectures", format_lectures_js(quiz_lib), 1520, 1240))
@@ -840,10 +1445,23 @@ JOIN psy.subtopics s ON s.id = q.subtopic_id
 LEFT JOIN psy.glossary_terms gt ON gt.id = q.term_id
 WHERE q.lecture_id = $1::uuid
   AND q.superseded_at IS NULL
+  AND EXISTS (
+    SELECT 1
+    FROM psy.lectures lec
+    JOIN psy.courses c ON c.id = lec.course_id
+    WHERE lec.id = q.lecture_id
+      AND (
+        c.workspace_id IN (SELECT w.id FROM psy.workspaces w WHERE w.owner_user_id = $2::uuid)
+        OR EXISTS (
+          SELECT 1 FROM psy.course_members cm
+          WHERE cm.course_id = c.id AND cm.user_id = $2::uuid
+        )
+      )
+  )
 ORDER BY s.ordinal, q.ordinal_in_subtopic NULLS LAST, q.created_at;
 """.strip(),
             1280,
-            1560,
+            1860,
             query_replacement="={{ [$json.lecture_id, $json.user_id] }}",
         )
     )
@@ -1146,6 +1764,12 @@ RETURNING id, status;
             "Load — Candidates",
             "Load — Next Question",
             "Load — Current Question",
+            "Load — Owned Courses",
+            "Load — Invites",
+            "DB — Create Invite",
+            "DB — Revoke Invite",
+            "DB — Redeem Invite",
+            "DB — Ensure User",
         ):
             n["alwaysOutputData"] = True
 
