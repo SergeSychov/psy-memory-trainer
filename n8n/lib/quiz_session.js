@@ -134,16 +134,15 @@ function formatQuestionMessage(question, index, total) {
   return lines.join('\n');
 }
 
+/** Telegram Bot API reply_markup shape (not n8n Telegram-node fixedCollection). */
 function inlineKeyboardRows(buttonsRows) {
   return {
-    rows: buttonsRows.map((row) => ({
-      row: {
-        buttons: row.map((btn) => ({
-          text: btn.text,
-          additionalFields: { callback_data: btn.callback_data },
-        })),
-      },
-    })),
+    inline_keyboard: (buttonsRows || []).map((row) =>
+      (row || []).map((btn) => ({
+        text: String(btn.text || ''),
+        callback_data: String(btn.callback_data || ''),
+      })),
+    ),
   };
 }
 
@@ -159,6 +158,10 @@ function choiceKeyboard(sessionId) {
 function nextKeyboard(sessionId) {
   return inlineKeyboardRows([[{ text: 'Дальше', callback_data: `next:${sessionId}` }]]);
 }
+
+/** Item rows per page (n8n Out keeps pageSize + 1 nav row fixed). */
+const COURSE_PAGE_SIZE = 2;
+const LECTURE_PAGE_SIZE = 4;
 
 function coursesKeyboard(courses) {
   return inlineKeyboardRows(
@@ -180,6 +183,109 @@ function lecturesKeyboard(lectures) {
       },
     ]),
   );
+}
+
+function padItemRows(keyboard, pageSize) {
+  const kb = keyboard || { inline_keyboard: [] };
+  kb.inline_keyboard = kb.inline_keyboard || [];
+  while (kb.inline_keyboard.length < pageSize) {
+    kb.inline_keyboard.push([{ text: '·', callback_data: 'noop' }]);
+  }
+  return kb;
+}
+
+function pageCaption(prefix, offset, pageSize, total) {
+  if (!total) return prefix;
+  if (total <= pageSize) return prefix;
+  const from = offset + 1;
+  const to = Math.min(offset + pageSize, total);
+  return `${prefix} (${from}–${to} из ${total})`;
+}
+
+function navButtons({ kind, offset, pageSize, total, courseId }) {
+  const start = Math.max(0, Number(offset) || 0);
+  const size = Math.max(1, Number(pageSize) || 1);
+  const prevOffset = Math.max(0, start - size);
+  const nextOffset = start + size;
+  const hasPrev = start > 0;
+  const hasNext = nextOffset < total;
+  const buttons = [];
+  if (kind === 'courses') {
+    buttons.push(
+      hasPrev
+        ? { text: 'Назад', callback_data: `page:courses:${prevOffset}` }
+        : { text: '·', callback_data: 'noop' },
+    );
+    buttons.push(
+      hasNext
+        ? { text: 'Ещё', callback_data: `page:courses:${nextOffset}` }
+        : { text: '·', callback_data: 'noop' },
+    );
+  } else {
+    const id = String(courseId || '');
+    buttons.push(
+      hasPrev
+        ? { text: 'Назад', callback_data: `page:lectures:${id}:${prevOffset}` }
+        : { text: '·', callback_data: 'noop' },
+    );
+    buttons.push(
+      hasNext
+        ? { text: 'Ещё', callback_data: `page:lectures:${id}:${nextOffset}` }
+        : { text: '·', callback_data: 'noop' },
+    );
+  }
+  return buttons;
+}
+
+function clampPageOffset(offset, pageSize, total) {
+  const size = Math.max(1, Number(pageSize) || 1);
+  let start = Math.max(0, Number(offset) || 0);
+  if (total <= 0) return 0;
+  const maxStart = Math.max(0, Math.floor((total - 1) / size) * size);
+  if (start > maxStart) start = maxStart;
+  return start;
+}
+
+function buildCoursesPage(courses, offset) {
+  const all = (courses || []).filter((c) => c && c.id);
+  const total = all.length;
+  const pageSize = COURSE_PAGE_SIZE;
+  const start = clampPageOffset(offset, pageSize, total);
+  const page = all.slice(start, start + pageSize);
+  const keyboard = padItemRows(coursesKeyboard(page), pageSize);
+  keyboard.inline_keyboard.push(
+    navButtons({ kind: 'courses', offset: start, pageSize, total }),
+  );
+  return {
+    keyboard,
+    total,
+    offset: start,
+    shown: page.length,
+    pageSize,
+    kb_rows: pageSize + 1,
+    out_text: pageCaption('Выберите курс:', start, pageSize, total),
+  };
+}
+
+function buildLecturesPage(lectures, offset, courseId) {
+  const all = (lectures || []).filter((l) => l && l.id);
+  const total = all.length;
+  const pageSize = LECTURE_PAGE_SIZE;
+  const start = clampPageOffset(offset, pageSize, total);
+  const page = all.slice(start, start + pageSize);
+  const keyboard = padItemRows(lecturesKeyboard(page), pageSize);
+  keyboard.inline_keyboard.push(
+    navButtons({ kind: 'lectures', offset: start, pageSize, total, courseId }),
+  );
+  return {
+    keyboard,
+    total,
+    offset: start,
+    shown: page.length,
+    pageSize,
+    kb_rows: pageSize + 1,
+    out_text: pageCaption('Выберите лекцию:', start, pageSize, total),
+  };
 }
 
 function explanationFor(question, chosen) {
@@ -263,6 +369,23 @@ function computeResponseMs(askedAt, now) {
 
 function parseCallback(data) {
   const raw = String(data || '');
+  if (raw === 'noop') {
+    return { kind: 'noop' };
+  }
+  if (raw.startsWith('page:courses:')) {
+    const offset = Number(raw.slice('page:courses:'.length));
+    if (!Number.isFinite(offset) || offset < 0) return { kind: 'unknown', raw };
+    return { kind: 'page_courses', offset: Math.floor(offset) };
+  }
+  if (raw.startsWith('page:lectures:')) {
+    const rest = raw.slice('page:lectures:'.length);
+    const idx = rest.lastIndexOf(':');
+    if (idx <= 0) return { kind: 'unknown', raw };
+    const courseId = rest.slice(0, idx);
+    const offset = Number(rest.slice(idx + 1));
+    if (!courseId || !Number.isFinite(offset) || offset < 0) return { kind: 'unknown', raw };
+    return { kind: 'page_lectures', courseId, offset: Math.floor(offset) };
+  }
   if (raw.startsWith('course:')) {
     return { kind: 'course', courseId: raw.slice(7) };
   }
@@ -308,6 +431,8 @@ function tallyAnswer({ session, correct, subtopicTitle }) {
 module.exports = {
   QUIZ_SIZE,
   CHOICES,
+  COURSE_PAGE_SIZE,
+  LECTURE_PAGE_SIZE,
   hashSeed,
   mulberry32,
   shuffle,
@@ -320,6 +445,12 @@ module.exports = {
   nextKeyboard,
   coursesKeyboard,
   lecturesKeyboard,
+  padItemRows,
+  pageCaption,
+  navButtons,
+  clampPageOffset,
+  buildCoursesPage,
+  buildLecturesPage,
   explanationFor,
   formatFeedback,
   formatSummary,

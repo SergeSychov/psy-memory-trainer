@@ -12,8 +12,16 @@ const {
   tallyAnswer,
   ratingForAnswer,
   computeResponseMs,
+  coursesKeyboard,
+  choiceKeyboard,
+  buildCoursesPage,
+  buildLecturesPage,
+  COURSE_PAGE_SIZE,
+  LECTURE_PAGE_SIZE,
   QUIZ_SIZE,
 } = require('./quiz_session');
+
+const UUID = '123e4567-e89b-12d3-a456-426614174000';
 
 function q(id, subtopicId, answered) {
   return {
@@ -132,7 +140,7 @@ test('lectureLabel uses drive folder_path', () => {
   );
 });
 
-test('parseCallback covers course/lecture/answer/next', () => {
+test('parseCallback covers course/lecture/answer/next/page/noop', () => {
   assert.deepEqual(parseCallback('course:abc'), { kind: 'course', courseId: 'abc' });
   assert.deepEqual(parseCallback('lecture:xyz'), { kind: 'lecture', lectureId: 'xyz' });
   assert.deepEqual(parseCallback('ans:sid:B'), {
@@ -141,6 +149,97 @@ test('parseCallback covers course/lecture/answer/next', () => {
     choice: 'B',
   });
   assert.deepEqual(parseCallback('next:sid'), { kind: 'next', sessionId: 'sid' });
+  assert.deepEqual(parseCallback('noop'), { kind: 'noop' });
+  assert.deepEqual(parseCallback('page:courses:2'), { kind: 'page_courses', offset: 2 });
+  assert.deepEqual(parseCallback(`page:lectures:${UUID}:4`), {
+    kind: 'page_lectures',
+    courseId: UUID,
+    offset: 4,
+  });
+});
+
+test('buildCoursesPage paginates and pads short lists', () => {
+  const many = Array.from({ length: 5 }, (_, i) => ({
+    id: `c${i}`,
+    title: `Курс ${i}`,
+  }));
+  const page0 = buildCoursesPage(many, 0);
+  assert.equal(page0.kb_rows, COURSE_PAGE_SIZE + 1);
+  assert.equal(page0.keyboard.inline_keyboard.length, COURSE_PAGE_SIZE + 1);
+  assert.equal(page0.keyboard.inline_keyboard[0][0].callback_data, 'course:c0');
+  assert.equal(page0.keyboard.inline_keyboard[1][0].callback_data, 'course:c1');
+  assert.match(page0.out_text, /1–2 из 5/);
+  const nav0 = page0.keyboard.inline_keyboard[COURSE_PAGE_SIZE];
+  assert.equal(nav0[0].callback_data, 'noop');
+  assert.equal(nav0[1].callback_data, 'page:courses:2');
+  assert.equal(nav0[1].text, 'Ещё');
+
+  const page1 = buildCoursesPage(many, 2);
+  assert.equal(page1.keyboard.inline_keyboard[0][0].callback_data, 'course:c2');
+  assert.equal(page1.keyboard.inline_keyboard[COURSE_PAGE_SIZE][0].callback_data, 'page:courses:0');
+  assert.equal(page1.keyboard.inline_keyboard[COURSE_PAGE_SIZE][0].text, 'Назад');
+  assert.equal(page1.keyboard.inline_keyboard[COURSE_PAGE_SIZE][1].callback_data, 'page:courses:4');
+
+  const page2 = buildCoursesPage(many, 4);
+  assert.equal(page2.shown, 1);
+  assert.equal(page2.keyboard.inline_keyboard[1][0].callback_data, 'noop');
+  assert.equal(page2.keyboard.inline_keyboard[1][0].text, '·');
+  assert.equal(page2.keyboard.inline_keyboard[COURSE_PAGE_SIZE][1].callback_data, 'noop');
+  assert.match(page2.out_text, /5–5 из 5/);
+
+  const short = buildCoursesPage([{ id: 'only', title: 'Один' }], 0);
+  assert.equal(short.out_text, 'Выберите курс:');
+  assert.equal(short.keyboard.inline_keyboard[1][0].callback_data, 'noop');
+  assert.equal(short.keyboard.inline_keyboard[COURSE_PAGE_SIZE][0].callback_data, 'noop');
+  assert.equal(short.keyboard.inline_keyboard[COURSE_PAGE_SIZE][1].callback_data, 'noop');
+});
+
+test('buildLecturesPage paginates with course id in nav callbacks', () => {
+  const lectures = Array.from({ length: 9 }, (_, i) => ({
+    id: `l${i}`,
+    title: `Лекция ${i}`,
+  }));
+  const page0 = buildLecturesPage(lectures, 0, UUID);
+  assert.equal(page0.kb_rows, LECTURE_PAGE_SIZE + 1);
+  assert.equal(page0.keyboard.inline_keyboard.length, LECTURE_PAGE_SIZE + 1);
+  assert.match(page0.out_text, /1–4 из 9/);
+  const nextCb = page0.keyboard.inline_keyboard[LECTURE_PAGE_SIZE][1].callback_data;
+  assert.equal(nextCb, `page:lectures:${UUID}:4`);
+  assert.ok(Buffer.byteLength(nextCb, 'utf8') <= 64);
+
+  const page1 = buildLecturesPage(lectures, 4, UUID);
+  assert.equal(page1.keyboard.inline_keyboard[0][0].callback_data, 'lecture:l4');
+  assert.equal(
+    page1.keyboard.inline_keyboard[LECTURE_PAGE_SIZE][0].callback_data,
+    `page:lectures:${UUID}:0`,
+  );
+  assert.equal(
+    page1.keyboard.inline_keyboard[LECTURE_PAGE_SIZE][1].callback_data,
+    `page:lectures:${UUID}:8`,
+  );
+
+  const page2 = buildLecturesPage(lectures, 8, UUID);
+  assert.equal(page2.shown, 1);
+  assert.match(page2.out_text, /9–9 из 9/);
+  assert.equal(page2.keyboard.inline_keyboard[LECTURE_PAGE_SIZE][1].callback_data, 'noop');
+});
+
+test('UUID course/lecture callback_data stay within Telegram 64-byte limit', () => {
+  const courseCb = `course:${UUID}`;
+  const lectureCb = `lecture:${UUID}`;
+  const pageLectures = `page:lectures:${UUID}:999`;
+  assert.ok(Buffer.byteLength(courseCb, 'utf8') <= 64);
+  assert.ok(Buffer.byteLength(lectureCb, 'utf8') <= 64);
+  assert.ok(Buffer.byteLength(pageLectures, 'utf8') <= 64);
+  const kb = coursesKeyboard([{ id: UUID, title: 'Курс' }]);
+  assert.equal(kb.inline_keyboard[0][0].callback_data, courseCb);
+});
+
+test('empty courses page helper still reports zero total (format node shows empty text)', () => {
+  const empty = buildCoursesPage([], 0);
+  assert.equal(empty.total, 0);
+  assert.equal(empty.shown, 0);
+  assert.equal(empty.out_text, 'Выберите курс:');
 });
 
 test('tallyAnswer and rating helpers', () => {
@@ -160,4 +259,23 @@ test('tallyAnswer and rating helpers', () => {
     computeResponseMs('2026-11-19T10:00:00.000Z', '2026-11-19T10:00:01.500Z'),
     1500,
   );
+});
+
+test('coursesKeyboard / choiceKeyboard use Telegram inline_keyboard shape', () => {
+  const courses = coursesKeyboard([
+    { id: 'c1', title: 'Курс один' },
+    { id: 'c2', title: 'Курс два' },
+  ]);
+  assert.ok(Array.isArray(courses.inline_keyboard));
+  assert.equal(courses.inline_keyboard.length, 2);
+  assert.equal(courses.inline_keyboard[0][0].callback_data, 'course:c1');
+  assert.equal(courses.rows, undefined);
+
+  const choices = choiceKeyboard('sid');
+  assert.equal(choices.inline_keyboard.length, 1);
+  assert.deepEqual(
+    choices.inline_keyboard[0].map((b) => b.text),
+    ['A', 'B', 'C', 'D'],
+  );
+  assert.equal(choices.inline_keyboard[0][1].callback_data, 'ans:sid:B');
 });
