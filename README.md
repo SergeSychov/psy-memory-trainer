@@ -4,6 +4,8 @@
 
 Продукт помогает Наталье учить видеокурс психологии. Лекция проходит цепочку: транскрипт (свой faster-whisper) → структурированный конспект (дешёвая LLM) → термины и жизненные вопросы с выбором ответа → интервальные повторения FSRS в Telegram-боте. Оркестрация — n8n, данные — Postgres/Supabase с pgvector, площадка — Dokploy. Потолок расходов на работу продукта — 500 ₽ в месяц.
 
+Что уже сделано и что впереди — в [дорожной карте](docs/ROADMAP.md).
+
 ## Как начать
 
 1. Прочитайте [AGENTS.md](AGENTS.md) и [план](docs/plan.md). Исходный контекст MVP — в [docs/kickoff_prompt.md](docs/kickoff_prompt.md).
@@ -15,7 +17,7 @@
 
 | Путь | Назначение |
 |---|---|
-| [docs/](docs/README.md) | План реализации и kickoff |
+| [docs/](docs/README.md) | План реализации, kickoff и [дорожная карта](docs/ROADMAP.md) |
 | [prompts/](prompts/README.md) | Системные промпты LLM |
 | [workflows/](workflows/README.md) | JSON-экспорт n8n и контракты узлов |
 | [db/migrations/](db/migrations/README.md) | Миграции Postgres |
