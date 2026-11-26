@@ -300,6 +300,10 @@ test('parseStartPayload handles plain, invite, bot suffix, bad code', () => {
   });
   assert.equal(parseStartPayload('/start bad!').kind, 'bad_code');
   assert.equal(parseStartPayload('/start short').kind, 'bad_code');
+  assert.equal(parseStartPayload('').kind, 'empty');
+  assert.equal(parseStartPayload(`/start ${'a'.repeat(65)}`).kind, 'bad_code');
+  assert.equal(parseStartPayload('/START').kind, 'plain');
+  assert.equal(parseStartPayload('/start a b').kind, 'bad_code');
 });
 
 test('inviteRefusal and texts cover lifecycle', () => {
@@ -308,6 +312,19 @@ test('inviteRefusal and texts cover lifecycle', () => {
   assert.equal(
     inviteRefusal({ id: '1', expires_at: '2020-01-01T00:00:00.000Z' }, '2026-01-01'),
     'expired',
+  );
+  assert.equal(
+    inviteRefusal({ id: '1', expires_at: '2099-01-01T00:00:00.000Z' }, '2026-01-01'),
+    null,
+  );
+  assert.equal(inviteRefusal({ id: '1', max_uses: null, uses_count: 99 }), null);
+  assert.equal(
+    inviteRefusal({
+      id: '1',
+      revoked_at: '2026-01-01',
+      expires_at: '2020-01-01T00:00:00.000Z',
+    }),
+    'revoked',
   );
   assert.equal(inviteRefusal({ id: '1', max_uses: 2, uses_count: 2 }), 'exhausted');
   assert.equal(inviteRefusal({ id: '1', max_uses: 2, uses_count: 1 }), null);
@@ -325,6 +342,9 @@ test('welcomeText and buildInviteLink', () => {
     welcomeText({ joinedCourse: true, courseTitle: 'Тест' }),
     /подключены к курсу «Тест»/,
   );
+  const escaped = welcomeText({ joinedCourse: true, courseTitle: 'A<b>&' });
+  assert.match(escaped, /A&lt;b&gt;&amp;/);
+  assert.doesNotMatch(escaped, /<b>/);
   const link = buildInviteLink('natasha_study_bot', 'Abcd1234_xy');
   assert.equal(link, 'https://t.me/natasha_study_bot?start=Abcd1234_xy');
   assert.equal(buildInviteLink('bot', 'short'), null);
@@ -355,9 +375,22 @@ test('invite course/revoke callbacks stay within 64 bytes', () => {
   assert.equal(page.keyboard.inline_keyboard[COURSE_PAGE_SIZE][1].callback_data, 'page:invcourses:2');
 
   const list = buildInvitesListPage(
-    [{ id: UUID, course_title: 'Курс', uses_count: 1, max_uses: null, expires_at: null }],
+    [
+      { id: UUID, course_title: 'A<b>&', uses_count: 1, max_uses: null, expires_at: null },
+      {
+        id: '223e4567-e89b-12d3-a456-426614174000',
+        course_title: 'B',
+        uses_count: 0,
+        max_uses: 3,
+        expires_at: null,
+      },
+    ],
     0,
   );
+  assert.equal(list.keyboard.inline_keyboard[0][0].text, 'Отозвать 1');
+  assert.equal(list.keyboard.inline_keyboard[1][0].text, 'Отозвать 2');
   assert.equal(list.keyboard.inline_keyboard[0][0].callback_data, `inv:revoke:${UUID}`);
   assert.match(list.out_text, /Активные приглашения/);
+  assert.match(list.out_text, /A&lt;b&gt;&amp;/);
+  assert.doesNotMatch(list.out_text, /<b>/);
 });

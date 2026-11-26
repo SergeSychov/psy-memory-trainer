@@ -82,7 +82,8 @@ CREATE INDEX IF NOT EXISTS course_members_user_id_idx
 COMMENT ON TABLE psy.course_members IS
     'Students added via invite (or backfill). Course owner is workspace owner, not a member row.';
 
--- Backfill: require exactly one Сергей and one Наталья; no course titles/ids in this script.
+-- Backfill: курсы сознательно привязаны к workspace Сергея независимо от courses.user_id (в проде = Наталья).
+-- Require exactly one Сергей and one Наталья; no course titles/ids in this script.
 DO $$
 DECLARE
     serge_id uuid;

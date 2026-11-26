@@ -180,9 +180,15 @@ INSERT INTO _t VALUES (convert_from(decode('{b64}', 'base64'), 'UTF8'));
 WITH u AS (
   INSERT INTO psy.users (telegram_user_id, display_name)
   VALUES (-100002, 'psy_test') RETURNING id
+), ws AS (
+  INSERT INTO psy.workspaces (owner_user_id)
+  SELECT id FROM u
+  ON CONFLICT (owner_user_id) DO UPDATE
+    SET owner_user_id = EXCLUDED.owner_user_id
+  RETURNING id, owner_user_id
 ), c AS (
-  INSERT INTO psy.courses (user_id, title, drive_folder_id)
-  SELECT id, 'psy_test', '_psy_test_accept' FROM u RETURNING id
+  INSERT INTO psy.courses (user_id, title, drive_folder_id, workspace_id)
+  SELECT u.id, 'psy_test', '_psy_test_accept', ws.id FROM u, ws RETURNING id
 ), l AS (
   INSERT INTO psy.lectures (
     course_id, title, status, media_kind, external_file_id, lecturer_name, duration_sec

@@ -864,7 +864,7 @@ return [{{ json: {{
 WITH params AS (
   SELECT
     $1::uuid AS user_id,
-    encode(extensions.digest($2::text, 'sha256'), 'hex') AS code_hash
+    encode(sha256(convert_to($2::text, 'UTF8')), 'hex') AS code_hash
 ),
 inv AS (
   SELECT i.*
@@ -886,24 +886,24 @@ already AS (
        WHERE cm.course_id = inv.course_id AND cm.user_id = p.user_id
      )
 ),
+mem AS (
+  INSERT INTO psy.course_members (course_id, user_id, role, invite_id)
+  SELECT inv.course_id, p.user_id, 'student', inv.id
+  FROM inv
+  CROSS JOIN params p
+  WHERE inv.revoked_at IS NULL
+    AND (inv.expires_at IS NULL OR inv.expires_at > now())
+    AND (inv.max_uses IS NULL OR inv.uses_count < inv.max_uses)
+    AND NOT EXISTS (SELECT 1 FROM already)
+  ON CONFLICT (course_id, user_id) DO NOTHING
+  RETURNING course_id, invite_id
+),
 bump AS (
   UPDATE psy.invites i
   SET uses_count = i.uses_count + 1
-  FROM inv, params p
-  WHERE i.id = inv.id
-    AND i.revoked_at IS NULL
-    AND (i.expires_at IS NULL OR i.expires_at > now())
-    AND (i.max_uses IS NULL OR i.uses_count < i.max_uses)
-    AND NOT EXISTS (SELECT 1 FROM already)
-  RETURNING i.id, i.course_id
-),
-mem AS (
-  INSERT INTO psy.course_members (course_id, user_id, role, invite_id)
-  SELECT b.course_id, p.user_id, 'student', b.id
-  FROM bump b
-  CROSS JOIN params p
-  ON CONFLICT (course_id, user_id) DO NOTHING
-  RETURNING course_id, invite_id
+  FROM mem
+  WHERE i.id = mem.invite_id
+  RETURNING i.id
 )
 SELECT
   (already.invite_id IS NOT NULL OR mem.course_id IS NOT NULL) AS ok,
@@ -1073,7 +1073,7 @@ return [{{ json: {{
             "DB — Create Invite",
             """
 WITH gen AS (
-  SELECT translate(encode(extensions.gen_random_bytes(12), 'base64'), '+/=', '-_') AS code
+  SELECT replace(gen_random_uuid()::text, '-', '') AS code
 ),
 owned AS (
   SELECT c.id, c.title
@@ -1083,7 +1083,7 @@ owned AS (
 ),
 ins AS (
   INSERT INTO psy.invites (course_id, created_by, code_hash, expires_at)
-  SELECT owned.id, $2::uuid, encode(extensions.digest(gen.code, 'sha256'), 'hex'), now() + interval '30 days'
+  SELECT owned.id, $2::uuid, encode(sha256(convert_to(gen.code, 'UTF8')), 'hex'), now() + interval '30 days'
   FROM owned
   CROSS JOIN gen
   RETURNING id, course_id, expires_at, uses_count, max_uses

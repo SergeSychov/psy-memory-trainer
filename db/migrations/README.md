@@ -12,7 +12,7 @@ SQL-миграции Postgres/Supabase (pgvector). В kickoff каталог н�
 | [`0004_questions_thesis_nullable_term.sql`](0004_questions_thesis_nullable_term.sql) | `questions.term_id` nullable + `source_kind`/`thesis`; `cards.term_id` nullable — **не применять без «да»** |
 | [`0005_glossary_definition_source.sql`](0005_glossary_definition_source.sql) | `glossary_terms.definition_source` (`lecture`\|`textbook`\|NULL); непустые → `lecture` — **не применять без «да»** |
 | [`0006_quiz_sessions.sql`](0006_quiz_sessions.sql) | `quiz_sessions` + `reviews.response_ms`/`session_id` |
-| [`0007_workspaces_invites.sql`](0007_workspaces_invites.sql) | `workspaces`, `course_members`, `invites`, `users.is_system_admin`, `courses.workspace_id` + backfill — **не применять без ок** |
+| [`0007_workspaces_invites.sql`](0007_workspaces_invites.sql) | `workspaces`, `course_members`, `invites`, `users.is_system_admin`, `courses.workspace_id` + backfill — **не применять без ок**; применять один раз: `psql -v ON_ERROR_STOP=1 -f` |
 
 `CREATE EXTENSION` нет: `pgcrypto` / `uuid-ossp` / `vector` уже в `extensions`. Колонки embedding нет.
 

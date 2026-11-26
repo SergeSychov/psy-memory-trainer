@@ -413,7 +413,7 @@ function inviteRefusalText(reason) {
 
 function welcomeText({ isNew, joinedCourse, courseTitle } = {}) {
   if (joinedCourse) {
-    const title = courseTitle ? String(courseTitle) : 'курс';
+    const title = escapeHtml(courseTitle ? String(courseTitle) : 'курс');
     return `Вы подключены к курсу «${title}».\n\nКоманды:\n/quiz — квиз по лекции\n/stop — прервать сессию\n/help — справка`;
   }
   if (isNew) {
@@ -463,18 +463,18 @@ function buildInviteCoursesPage(courses, offset) {
   };
 }
 
-function invitesListKeyboard(invites) {
+function invitesListKeyboard(invites, startIndex = 0) {
   return inlineKeyboardRows(
-    (invites || []).map((inv) => [
+    (invites || []).map((inv, i) => [
       {
-        text: 'Отозвать',
+        text: `Отозвать ${startIndex + i + 1}`,
         callback_data: `inv:revoke:${inv.id}`,
       },
     ]),
   );
 }
 
-function formatInviteListLines(invites) {
+function formatInviteListLines(invites, startIndex = 0) {
   const lines = ['Активные приглашения:'];
   const list = invites || [];
   if (!list.length) {
@@ -482,7 +482,7 @@ function formatInviteListLines(invites) {
     return lines.join('\n');
   }
   list.forEach((inv, i) => {
-    const title = String(inv.course_title || 'Курс').slice(0, 40);
+    const title = escapeHtml(String(inv.course_title || 'Курс')).slice(0, 40);
     const used = Number(inv.uses_count || 0);
     const max = inv.max_uses == null ? '∞' : String(inv.max_uses);
     let exp = 'без срока';
@@ -492,10 +492,10 @@ function formatInviteListLines(invites) {
         exp = d.toISOString().slice(0, 10);
       }
     }
-    lines.push(`${i + 1}. ${title} — ${used}/${max}, до ${exp}`);
+    lines.push(`${startIndex + i + 1}. ${title} — ${used}/${max}, до ${exp}`);
   });
   lines.push('');
-  lines.push('Кнопка «Отозвать» под сообщением — по порядку списка.');
+  lines.push('Кнопка «Отозвать N» под сообщением — по номеру в списке.');
   return lines.join('\n');
 }
 
@@ -505,7 +505,7 @@ function buildInvitesListPage(invites, offset) {
   const pageSize = LECTURE_PAGE_SIZE;
   const start = clampPageOffset(offset, pageSize, total);
   const page = all.slice(start, start + pageSize);
-  const keyboard = padItemRows(invitesListKeyboard(page), pageSize);
+  const keyboard = padItemRows(invitesListKeyboard(page, start), pageSize);
   keyboard.inline_keyboard.push(
     navButtons({ kind: 'invites', offset: start, pageSize, total }),
   );
@@ -516,7 +516,7 @@ function buildInvitesListPage(invites, offset) {
     shown: page.length,
     pageSize,
     kb_rows: total ? pageSize + 1 : 0,
-    out_text: formatInviteListLines(page),
+    out_text: formatInviteListLines(page, start),
   };
 }
 
