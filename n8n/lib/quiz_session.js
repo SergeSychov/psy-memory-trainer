@@ -185,15 +185,6 @@ function lecturesKeyboard(lectures) {
   );
 }
 
-function padItemRows(keyboard, pageSize) {
-  const kb = keyboard || { inline_keyboard: [] };
-  kb.inline_keyboard = kb.inline_keyboard || [];
-  while (kb.inline_keyboard.length < pageSize) {
-    kb.inline_keyboard.push([{ text: '·', callback_data: 'noop' }]);
-  }
-  return kb;
-}
-
 function pageCaption(prefix, offset, pageSize, total) {
   if (!total) return prefix;
   if (total <= pageSize) return prefix;
@@ -202,14 +193,48 @@ function pageCaption(prefix, offset, pageSize, total) {
   return `${prefix} (${from}–${to} из ${total})`;
 }
 
+/**
+ * Fixed Telegram keyboard layout key: "<itemsOnPage>/<nav_variant>".
+ * No noop item pads — outs are selected by this key in n8n.
+ */
+function keyboardVariant(itemsOnPage, offset, pageSize, total) {
+  const size = Math.max(1, Number(pageSize) || 1);
+  const start = Math.max(0, Number(offset) || 0);
+  const tot = Math.max(0, Number(total) || 0);
+  const items = Math.max(0, Math.min(Number(itemsOnPage) || 0, size));
+  const hasPrev = start > 0;
+  const hasNext = start + size < tot;
+  let nav_variant = 'none';
+  if (hasPrev && hasNext) nav_variant = 'both';
+  else if (hasPrev) nav_variant = 'prev';
+  else if (hasNext) nav_variant = 'next';
+  return {
+    key: `${items}/${nav_variant}`,
+    items_on_page: items,
+    nav_variant,
+    has_nav: nav_variant !== 'none',
+    has_prev: hasPrev,
+    has_next: hasNext,
+    kb_rows: items + (nav_variant === 'none' ? 0 : 1),
+  };
+}
+
+/** @deprecated alias — prefer keyboardVariant */
+function pageKeyboardVariant(itemsCount, offset, pageSize, total) {
+  const v = keyboardVariant(itemsCount, offset, pageSize, total);
+  return {
+    ...v,
+    item_rows: v.items_on_page,
+    shown: v.items_on_page,
+  };
+}
+
 function navButtons({ kind, offset, pageSize, total, courseId }) {
   const start = Math.max(0, Number(offset) || 0);
   const size = Math.max(1, Number(pageSize) || 1);
   const prevOffset = Math.max(0, start - size);
   const nextOffset = start + size;
-  const hasPrev = start > 0;
-  const hasNext = nextOffset < total;
-  const buttons = [];
+  const variant = keyboardVariant(0, start, size, total);
   let prevCb = 'noop';
   let nextCb = 'noop';
   if (kind === 'courses') {
@@ -226,12 +251,13 @@ function navButtons({ kind, offset, pageSize, total, courseId }) {
     prevCb = `page:lectures:${id}:${prevOffset}`;
     nextCb = `page:lectures:${id}:${nextOffset}`;
   }
-  buttons.push(
-    hasPrev ? { text: 'Назад', callback_data: prevCb } : { text: '·', callback_data: 'noop' },
-  );
-  buttons.push(
-    hasNext ? { text: 'Ещё', callback_data: nextCb } : { text: '·', callback_data: 'noop' },
-  );
+  const buttons = [];
+  if (variant.has_prev) {
+    buttons.push({ text: 'Назад', callback_data: prevCb });
+  }
+  if (variant.has_next) {
+    buttons.push({ text: 'Ещё', callback_data: nextCb });
+  }
   return buttons;
 }
 
@@ -244,23 +270,48 @@ function clampPageOffset(offset, pageSize, total) {
   return start;
 }
 
+function finalizePagedKeyboard(keyboard, { kind, offset, pageSize, total, courseId, itemsOnPage }) {
+  const items =
+    itemsOnPage == null
+      ? (keyboard.inline_keyboard || []).length
+      : Number(itemsOnPage) || 0;
+  const variant = keyboardVariant(items, offset, pageSize, total);
+  if (variant.has_nav) {
+    keyboard.inline_keyboard.push(
+      navButtons({ kind, offset, pageSize, total, courseId }),
+    );
+  }
+  return {
+    ...variant,
+    keyboard,
+  };
+}
+
 function buildCoursesPage(courses, offset) {
   const all = (courses || []).filter((c) => c && c.id);
   const total = all.length;
   const pageSize = COURSE_PAGE_SIZE;
   const start = clampPageOffset(offset, pageSize, total);
   const page = all.slice(start, start + pageSize);
-  const keyboard = padItemRows(coursesKeyboard(page), pageSize);
-  keyboard.inline_keyboard.push(
-    navButtons({ kind: 'courses', offset: start, pageSize, total }),
-  );
+  const keyboard = coursesKeyboard(page);
+  const fin = finalizePagedKeyboard(keyboard, {
+    kind: 'courses',
+    offset: start,
+    pageSize,
+    total,
+    itemsOnPage: page.length,
+  });
   return {
-    keyboard,
+    keyboard: fin.keyboard,
     total,
     offset: start,
     shown: page.length,
     pageSize,
-    kb_rows: pageSize + 1,
+    kb_rows: fin.kb_rows,
+    nav_variant: fin.nav_variant,
+    has_nav: fin.has_nav,
+    items_on_page: fin.items_on_page,
+    keyboard_variant: fin.key,
     out_text: pageCaption('Выберите курс:', start, pageSize, total),
   };
 }
@@ -271,17 +322,26 @@ function buildLecturesPage(lectures, offset, courseId) {
   const pageSize = LECTURE_PAGE_SIZE;
   const start = clampPageOffset(offset, pageSize, total);
   const page = all.slice(start, start + pageSize);
-  const keyboard = padItemRows(lecturesKeyboard(page), pageSize);
-  keyboard.inline_keyboard.push(
-    navButtons({ kind: 'lectures', offset: start, pageSize, total, courseId }),
-  );
+  const keyboard = lecturesKeyboard(page);
+  const fin = finalizePagedKeyboard(keyboard, {
+    kind: 'lectures',
+    offset: start,
+    pageSize,
+    total,
+    courseId,
+    itemsOnPage: page.length,
+  });
   return {
-    keyboard,
+    keyboard: fin.keyboard,
     total,
     offset: start,
     shown: page.length,
     pageSize,
-    kb_rows: pageSize + 1,
+    kb_rows: fin.kb_rows,
+    nav_variant: fin.nav_variant,
+    has_nav: fin.has_nav,
+    items_on_page: fin.items_on_page,
+    keyboard_variant: fin.key,
     out_text: pageCaption('Выберите лекцию:', start, pageSize, total),
   };
 }
@@ -411,7 +471,17 @@ function inviteRefusalText(reason) {
   }
 }
 
-function welcomeText({ isNew, joinedCourse, courseTitle } = {}) {
+function helpText({ ownsCourses } = {}) {
+  let text =
+    'Квиз без подсказок модели: вопросы уже в базе.\n/quiz — выбрать курс и лекцию\n/stop — остановить сессию\nОтветы — кнопками A–D.';
+  if (ownsCourses) {
+    text +=
+      '\n/invite — ссылка-приглашение в свой курс\n/invites — активные приглашения и отзыв';
+  }
+  return text;
+}
+
+function welcomeText({ isNew, joinedCourse, courseTitle, ownsCourses } = {}) {
   if (joinedCourse) {
     const title = escapeHtml(courseTitle ? String(courseTitle) : 'курс');
     return `Вы подключены к курсу «${title}».\n\nКоманды:\n/quiz — квиз по лекции\n/stop — прервать сессию\n/help — справка`;
@@ -419,7 +489,12 @@ function welcomeText({ isNew, joinedCourse, courseTitle } = {}) {
   if (isNew) {
     return 'Добро пожаловать!\n\nУ вас своё пространство с бесплатной квотой на лекции.\n/quiz — квиз (если есть доступные курсы)\n/help — справка\n\nЕсли есть ссылка-приглашение — откройте её, чтобы подключиться к курсу.';
   }
-  return 'Снова здравствуйте!\n\nКоманды:\n/quiz — квиз по лекции\n/stop — прервать сессию\n/help — справка\n/invite, /invites — для владельца курса';
+  let text =
+    'Снова здравствуйте!\n\nКоманды:\n/quiz — квиз по лекции\n/stop — прервать сессию\n/help — справка';
+  if (ownsCourses) {
+    text += '\n/invite, /invites — для владельца курса';
+  }
+  return text;
 }
 
 function buildInviteLink(botUsername, code) {
@@ -448,17 +523,25 @@ function buildInviteCoursesPage(courses, offset) {
   const pageSize = COURSE_PAGE_SIZE;
   const start = clampPageOffset(offset, pageSize, total);
   const page = all.slice(start, start + pageSize);
-  const keyboard = padItemRows(inviteCoursesKeyboard(page), pageSize);
-  keyboard.inline_keyboard.push(
-    navButtons({ kind: 'inv_courses', offset: start, pageSize, total }),
-  );
+  const keyboard = inviteCoursesKeyboard(page);
+  const fin = finalizePagedKeyboard(keyboard, {
+    kind: 'inv_courses',
+    offset: start,
+    pageSize,
+    total,
+    itemsOnPage: page.length,
+  });
   return {
-    keyboard,
+    keyboard: fin.keyboard,
     total,
     offset: start,
     shown: page.length,
     pageSize,
-    kb_rows: pageSize + 1,
+    kb_rows: fin.kb_rows,
+    nav_variant: fin.nav_variant,
+    has_nav: fin.has_nav,
+    items_on_page: fin.items_on_page,
+    keyboard_variant: fin.key,
     out_text: pageCaption('Выберите курс для приглашения:', start, pageSize, total),
   };
 }
@@ -505,17 +588,40 @@ function buildInvitesListPage(invites, offset) {
   const pageSize = LECTURE_PAGE_SIZE;
   const start = clampPageOffset(offset, pageSize, total);
   const page = all.slice(start, start + pageSize);
-  const keyboard = padItemRows(invitesListKeyboard(page, start), pageSize);
-  keyboard.inline_keyboard.push(
-    navButtons({ kind: 'invites', offset: start, pageSize, total }),
-  );
+  if (!total) {
+    return {
+      keyboard: { inline_keyboard: [] },
+      total: 0,
+      offset: 0,
+      shown: 0,
+      pageSize,
+      kb_rows: 0,
+      nav_variant: 'none',
+      has_nav: false,
+      items_on_page: 0,
+      keyboard_variant: '0/none',
+      out_text: formatInviteListLines([], 0),
+    };
+  }
+  const keyboard = invitesListKeyboard(page, start);
+  const fin = finalizePagedKeyboard(keyboard, {
+    kind: 'invites',
+    offset: start,
+    pageSize,
+    total,
+    itemsOnPage: page.length,
+  });
   return {
-    keyboard,
+    keyboard: fin.keyboard,
     total,
     offset: start,
     shown: page.length,
     pageSize,
-    kb_rows: total ? pageSize + 1 : 0,
+    kb_rows: fin.kb_rows,
+    nav_variant: fin.nav_variant,
+    has_nav: fin.has_nav,
+    items_on_page: fin.items_on_page,
+    keyboard_variant: fin.key,
     out_text: formatInviteListLines(page, start),
   };
 }
@@ -617,10 +723,12 @@ module.exports = {
   lecturesKeyboard,
   inviteCoursesKeyboard,
   invitesListKeyboard,
-  padItemRows,
   pageCaption,
+  keyboardVariant,
+  pageKeyboardVariant,
   navButtons,
   clampPageOffset,
+  finalizePagedKeyboard,
   buildCoursesPage,
   buildLecturesPage,
   buildInviteCoursesPage,
@@ -634,6 +742,7 @@ module.exports = {
   parseStartPayload,
   inviteRefusal,
   inviteRefusalText,
+  helpText,
   welcomeText,
   buildInviteLink,
   parseCallback,

@@ -119,17 +119,18 @@ def tg_send_markup(
     n_rows: int,
     cols: int = 1,
     paged: bool = False,
+    nav_cols: int | None = None,
 ) -> dict:
     """sendMessage with inline keyboard via per-button expressions.
 
     n8n ignores a dynamic object in ``inlineKeyboard``; each text/callback_data
-    field must be its own expression. paged=True → n_rows item rows + 1 nav row.
+    field must be its own expression.
+    paged=True → n_rows item rows + 1 nav row (nav_cols buttons, default 2).
     """
-    inline = (
-        _rows_paged(item_expr, n_rows, nav_cols=2)
-        if paged
-        else _rows_from_kb(item_expr, n_rows, cols)
-    )
+    if paged:
+        inline = _rows_paged(item_expr, n_rows, nav_cols=2 if nav_cols is None else nav_cols)
+    else:
+        inline = _rows_from_kb(item_expr, n_rows, cols)
     return {
         "id": nid(),
         "name": name,
@@ -151,6 +152,90 @@ def tg_send_markup(
         },
         "onError": "continueRegularOutput",
     }
+
+
+def switch_keyboard_variant(name: str, x: int, y: int, cases: list[str]) -> dict:
+    """Switch on $json.keyboard_variant (e.g. 2/none, 1/prev)."""
+    values = []
+    for case in cases:
+        values.append(
+            {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": True,
+                        "leftValue": "",
+                        "typeValidation": "loose",
+                    },
+                    "conditions": [
+                        {
+                            "id": nid(),
+                            "leftValue": "={{ $json.keyboard_variant }}",
+                            "rightValue": case,
+                            "operator": {"type": "string", "operation": "equals"},
+                        }
+                    ],
+                    "combinator": "and",
+                },
+                "renameOutput": True,
+                "outputKey": case,
+            }
+        )
+    return {
+        "id": nid(),
+        "name": name,
+        "type": "n8n-nodes-base.switch",
+        "typeVersion": 3.2,
+        "position": [x, y],
+        "parameters": {
+            "rules": {"values": values},
+            "options": {"fallbackOutput": "extra"},
+        },
+    }
+
+
+def append_keyboard_variant_outs(
+    nodes: list,
+    connections: dict,
+    *,
+    prefix: str,
+    page_size: int,
+    x: int,
+    y: int,
+    switch_from: str,
+    switch_src_output: int = 0,
+) -> None:
+    """Wire Switch keyboard_variant → outs for each itemsOnPage × nav_variant.
+
+    Courses page_size=2 → 8 outs; lectures page_size=4 → 16 outs. No noop item pads.
+    """
+    navs = ["none", "next", "prev", "both"]
+    cases: list[str] = []
+    for n_items in range(1, page_size + 1):
+        for nav in navs:
+            cases.append(f"{n_items}/{nav}")
+
+    sw = switch_keyboard_variant(f"IF — {prefix} Kb", x, y, cases)
+    nodes.append(sw)
+    link(connections, switch_from, sw["name"], src_output=switch_src_output)
+
+    for idx, case in enumerate(cases):
+        n_items_s, nav = case.split("/", 1)
+        n_items = int(n_items_s)
+        paged = nav != "none"
+        nav_cols = 2 if nav == "both" else 1
+        dy = (idx % 8) * 100 + (idx // 8) * 20
+        out = tg_send_markup(
+            f"Out — {prefix} ({case})",
+            x + 180,
+            y + dy,
+            item_expr="$json",
+            n_rows=n_items,
+            cols=1,
+            paged=paged,
+            nav_cols=nav_cols if paged else None,
+        )
+        nodes.append(out)
+        link(connections, sw["name"], out["name"], src_output=idx)
 
 
 def tg_ack(name: str, x: int, y: int) -> dict:
@@ -336,15 +421,11 @@ if (norm.command === '/start') {{
   if (startInfo.kind === 'invite') {{
     return reply('redeem_invite', '', {{ invite_code: startInfo.code }});
   }}
-  return reply('welcome', welcomeText({{ isNew: false }}));
+  return reply('welcome', welcomeText({{ isNew: false, ownsCourses: isOwner }}));
 }}
 
 if (norm.command === '/help') {{
-  let text = 'Квиз без подсказок модели: вопросы уже в базе.\\n/quiz — выбрать курс и лекцию\\n/stop — остановить сессию\\nОтветы — кнопками A–D.';
-  if (isOwner) {{
-    text += '\\n/invite — ссылка-приглашение в свой курс\\n/invites — активные приглашения и отзыв';
-  }}
-  return reply('help', text);
+  return reply('help', helpText({{ ownsCourses: isOwner }}));
 }}
 
 if (norm.command === '/stop') {{
@@ -466,6 +547,10 @@ return [{{ json: {{
   out_text: built.out_text,
   keyboard: built.keyboard,
   kb_rows: built.kb_rows,
+  nav_variant: built.nav_variant || 'none',
+  has_nav: !!built.has_nav,
+  items_on_page: built.items_on_page || 0,
+  keyboard_variant: built.keyboard_variant || '0/none',
   list_total: built.total,
   list_offset: built.offset,
 }} }}];
@@ -487,6 +572,10 @@ return [{{ json: {{
   out_text: built.out_text,
   keyboard: built.keyboard,
   kb_rows: built.kb_rows,
+  nav_variant: built.nav_variant || 'none',
+  has_nav: !!built.has_nav,
+  items_on_page: built.items_on_page || 0,
+  keyboard_variant: built.keyboard_variant || '0/none',
   list_total: built.total,
   list_offset: built.offset,
 }} }}];
@@ -788,16 +877,24 @@ ins_ws AS (
   SELECT id FROM ups
   ON CONFLICT (owner_user_id) DO NOTHING
   RETURNING id
+),
+resolved AS (
+  SELECT
+    ups.id AS user_id,
+    ups.display_name,
+    ups.is_new,
+    COALESCE(
+      (SELECT w.id FROM psy.workspaces w WHERE w.owner_user_id = ups.id LIMIT 1),
+      (SELECT id FROM ins_ws LIMIT 1)
+    ) AS workspace_id
+  FROM ups
 )
 SELECT
-  ups.id AS user_id,
-  ups.display_name,
-  ups.is_new,
-  COALESCE(
-    (SELECT w.id FROM psy.workspaces w WHERE w.owner_user_id = ups.id LIMIT 1),
-    (SELECT id FROM ins_ws LIMIT 1)
-  ) AS workspace_id
-FROM ups;
+  resolved.*,
+  EXISTS (
+    SELECT 1 FROM psy.courses c WHERE c.workspace_id = resolved.workspace_id
+  ) AS owns_courses
+FROM resolved;
 """.strip(),
             1280,
             680,
@@ -814,16 +911,19 @@ FROM ups;
 const route = $('Run — Route').first().json;
 const row = $input.first().json || {{}};
 const isNew = row.is_new === true || row.is_new === 't' || row.is_new === true;
+const ownsCourses = row.owns_courses === true || row.owns_courses === 't';
 const inviteCode = route.invite_code || null;
 return [{{ json: {{
   ...route,
   user_id: row.user_id || route.user_id,
   display_name: row.display_name || route.display_name,
   workspace_id: row.workspace_id || route.workspace_id,
+  owned_courses_count: ownsCourses ? Math.max(1, Number(route.owned_courses_count || 0)) : 0,
   is_new: isNew,
+  owns_courses: ownsCourses,
   invite_code: inviteCode,
   action: inviteCode ? 'redeem_invite' : 'welcome',
-  out_text: inviteCode ? '' : welcomeText({{ isNew }}),
+  out_text: inviteCode ? '' : welcomeText({{ isNew, ownsCourses }}),
   keyboard: null,
 }} }}];
 """,
@@ -1024,6 +1124,10 @@ return [{{ json: {{
   out_text: built.out_text,
   keyboard: built.keyboard,
   kb_rows: built.kb_rows,
+  nav_variant: built.nav_variant || 'none',
+  has_nav: !!built.has_nav,
+  items_on_page: built.items_on_page || 0,
+  keyboard_variant: built.keyboard_variant || '0/none',
 }} }}];
 """,
             1520,
@@ -1049,21 +1153,20 @@ return [{{ json: {{
             chat_id="={{ $json.chat_id }}",
         )
     )
-    nodes.append(
-        tg_send_markup(
-            "Out — Invite Courses",
-            1760,
-            900,
-            item_expr="$json",
-            n_rows=COURSE_PAGE_SIZE,
-            paged=True,
-        )
+    append_keyboard_variant_outs(
+        nodes,
+        connections,
+        prefix="Invite Courses",
+        page_size=COURSE_PAGE_SIZE,
+        x=1760,
+        y=900,
+        switch_from="IF — Has Invite Courses",
+        switch_src_output=0,
     )
-    nodes.append(tg_ack("Ack — Invite Courses", 1760, 980))
+    nodes.append(tg_ack("Ack — Invite Courses", 2000, 980))
     link(connections, "Run — Switch Action", "Load — Owned Courses", src_output=cases.index("invite_pick"))
     link(connections, "Load — Owned Courses", "Run — Format Invite Courses")
     link(connections, "Run — Format Invite Courses", "IF — Has Invite Courses")
-    link(connections, "IF — Has Invite Courses", "Out — Invite Courses", src_output=0)
     link(connections, "IF — Has Invite Courses", "Out — No Invite Courses", src_output=1)
     link(connections, "Run — Format Invite Courses", "Ack — Invite Courses")
 
@@ -1193,6 +1296,10 @@ return [{{ json: {{
   out_text: built.out_text,
   keyboard: built.keyboard,
   kb_rows: built.kb_rows,
+  nav_variant: built.nav_variant || 'none',
+  has_nav: !!built.has_nav,
+  items_on_page: built.items_on_page || 0,
+  keyboard_variant: built.keyboard_variant || '0/none',
 }} }}];
 """,
             1520,
@@ -1218,21 +1325,20 @@ return [{{ json: {{
             chat_id="={{ $json.chat_id }}",
         )
     )
-    nodes.append(
-        tg_send_markup(
-            "Out — Invites",
-            1760,
-            1220,
-            item_expr="$json",
-            n_rows=LECTURE_PAGE_SIZE,
-            paged=True,
-        )
+    append_keyboard_variant_outs(
+        nodes,
+        connections,
+        prefix="Invites",
+        page_size=LECTURE_PAGE_SIZE,
+        x=1760,
+        y=1220,
+        switch_from="IF — Has Invites Kb",
+        switch_src_output=0,
     )
-    nodes.append(tg_ack("Ack — Invites", 1760, 1300))
+    nodes.append(tg_ack("Ack — Invites", 2000, 1300))
     link(connections, "Run — Switch Action", "Load — Invites", src_output=cases.index("invites_list"))
     link(connections, "Load — Invites", "Run — Format Invites")
     link(connections, "Run — Format Invites", "IF — Has Invites Kb")
-    link(connections, "IF — Has Invites Kb", "Out — Invites", src_output=0)
     link(connections, "IF — Has Invites Kb", "Out — Invites Text", src_output=1)
     link(connections, "Run — Format Invites", "Ack — Invites")
 
@@ -1314,7 +1420,7 @@ ORDER BY c.title;
         )
     )
     nodes.append(code("Run — Format Courses", format_courses_js(quiz_lib), 1520, 1000))
-    # Empty list → plain text; otherwise fixed-row inline keyboard (per-button expressions).
+    # Empty list → plain text; otherwise keyboard_variant → fixed Telegram keyboards.
     nodes.append(
         iff(
             "IF — Has Courses",
@@ -1334,21 +1440,20 @@ ORDER BY c.title;
             chat_id="={{ $json.chat_id }}",
         )
     )
-    nodes.append(
-        tg_send_markup(
-            "Out — Courses",
-            1760,
-            1000,
-            item_expr="$json",
-            n_rows=COURSE_PAGE_SIZE,
-            paged=True,
-        )
+    append_keyboard_variant_outs(
+        nodes,
+        connections,
+        prefix="Courses",
+        page_size=COURSE_PAGE_SIZE,
+        x=1760,
+        y=1000,
+        switch_from="IF — Has Courses",
+        switch_src_output=0,
     )
-    nodes.append(tg_ack("Ack — Courses", 1760, 1120))
+    nodes.append(tg_ack("Ack — Courses", 2000, 1120))
     link(connections, "Run — Switch Action", "Load — Courses", src_output=cases.index("pick_course"))
     link(connections, "Load — Courses", "Run — Format Courses")
     link(connections, "Run — Format Courses", "IF — Has Courses")
-    link(connections, "IF — Has Courses", "Out — Courses", src_output=0)
     link(connections, "IF — Has Courses", "Out — No Courses", src_output=1)
     link(connections, "Run — Format Courses", "Ack — Courses")
 
@@ -1396,21 +1501,20 @@ ORDER BY COALESCE(l.source_meta #>> '{drive,folder_path,0}', l.title, l.id::text
             chat_id="={{ $json.chat_id }}",
         )
     )
-    nodes.append(
-        tg_send_markup(
-            "Out — Lectures",
-            1760,
-            1240,
-            item_expr="$json",
-            n_rows=LECTURE_PAGE_SIZE,
-            paged=True,
-        )
+    append_keyboard_variant_outs(
+        nodes,
+        connections,
+        prefix="Lectures",
+        page_size=LECTURE_PAGE_SIZE,
+        x=1760,
+        y=1240,
+        switch_from="IF — Has Lectures",
+        switch_src_output=0,
     )
-    nodes.append(tg_ack("Ack — Lectures", 1760, 1360))
+    nodes.append(tg_ack("Ack — Lectures", 2000, 1360))
     link(connections, "Run — Switch Action", "Load — Lectures", src_output=cases.index("pick_lecture"))
     link(connections, "Load — Lectures", "Run — Format Lectures")
     link(connections, "Run — Format Lectures", "IF — Has Lectures")
-    link(connections, "IF — Has Lectures", "Out — Lectures", src_output=0)
     link(connections, "IF — Has Lectures", "Out — No Lectures", src_output=1)
     link(connections, "Run — Format Lectures", "Ack — Lectures")
 
