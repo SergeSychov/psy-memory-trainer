@@ -106,9 +106,10 @@ JSON-экспорт и `.id` файлы. Деплой: `python3 n8n/scripts/pull
 | Триггер | `In — Telegram` (`message` + `callback_query`), credential **TelegramStudy** (`@natasha_study_bot`) |
 | Credentials | `TelegramStudy`, `psy Supabase (psy_n8n)` |
 | Логика | `n8n/lib/quiz_session.js` (встраивается при `build_psy_08_telegram_quiz.py`); без LLM |
-| Whitelist | `psy.users.telegram_user_id`; чужим — вежливый отказ, без записи в БД |
-| Команды | `/start`, `/help`, `/quiz` (курс → лекция `status=questions_ready`), `/stop` |
+| Доступ | `/start` создаёт `users` + `workspaces`; курсы — свои (`workspace`) или `course_members`; приглашение `?start=<код>` |
+| Команды | `/start`, `/help`, `/quiz`, `/stop`; владельцу: `/invite`, `/invites` |
 | Сессия | 10 MCQ; приоритет неотвеченных; A–D inline; «Дальше»; итог X/10 + подтемы с ошибками |
-| Пишет | `psy.quiz_sessions`, `psy.cards` (в т.ч. `term_id` NULL для thesis), `psy.reviews` (`rating` 3/1, `response_ms`, `session_id`) |
-| Зависимость | миграция `0006_quiz_sessions.sql` |
-| Активация | только этот workflow; перед activate — `getWebhookInfo` бота (не должен указывать на чужой webhook) |
+| Пишет | `psy.users`/`workspaces` (ensure), `psy.invites`/`course_members`, `psy.quiz_sessions`, `psy.cards`, `psy.reviews` |
+| Зависимость | миграции `0006_quiz_sessions.sql`, `0007_workspaces_invites.sql` |
+| Версия | `psy_08_telegram_quiz_v2`; экспорт: `python3 n8n/scripts/build_psy_08_telegram_quiz.py --local` (без webhookId) |
+| Активация | только этот workflow; импорт с сохранением active (как в PR #17); перед activate — `getWebhookInfo` |

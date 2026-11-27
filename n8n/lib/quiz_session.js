@@ -210,30 +210,28 @@ function navButtons({ kind, offset, pageSize, total, courseId }) {
   const hasPrev = start > 0;
   const hasNext = nextOffset < total;
   const buttons = [];
+  let prevCb = 'noop';
+  let nextCb = 'noop';
   if (kind === 'courses') {
-    buttons.push(
-      hasPrev
-        ? { text: 'Назад', callback_data: `page:courses:${prevOffset}` }
-        : { text: '·', callback_data: 'noop' },
-    );
-    buttons.push(
-      hasNext
-        ? { text: 'Ещё', callback_data: `page:courses:${nextOffset}` }
-        : { text: '·', callback_data: 'noop' },
-    );
+    prevCb = `page:courses:${prevOffset}`;
+    nextCb = `page:courses:${nextOffset}`;
+  } else if (kind === 'inv_courses') {
+    prevCb = `page:invcourses:${prevOffset}`;
+    nextCb = `page:invcourses:${nextOffset}`;
+  } else if (kind === 'invites') {
+    prevCb = `page:invites:${prevOffset}`;
+    nextCb = `page:invites:${nextOffset}`;
   } else {
     const id = String(courseId || '');
-    buttons.push(
-      hasPrev
-        ? { text: 'Назад', callback_data: `page:lectures:${id}:${prevOffset}` }
-        : { text: '·', callback_data: 'noop' },
-    );
-    buttons.push(
-      hasNext
-        ? { text: 'Ещё', callback_data: `page:lectures:${id}:${nextOffset}` }
-        : { text: '·', callback_data: 'noop' },
-    );
+    prevCb = `page:lectures:${id}:${prevOffset}`;
+    nextCb = `page:lectures:${id}:${nextOffset}`;
   }
+  buttons.push(
+    hasPrev ? { text: 'Назад', callback_data: prevCb } : { text: '·', callback_data: 'noop' },
+  );
+  buttons.push(
+    hasNext ? { text: 'Ещё', callback_data: nextCb } : { text: '·', callback_data: 'noop' },
+  );
   return buttons;
 }
 
@@ -367,6 +365,161 @@ function computeResponseMs(askedAt, now) {
   return Math.max(0, Math.round(end - start));
 }
 
+const INVITE_CODE_RE = /^[A-Za-z0-9_-]{8,64}$/;
+
+function parseStartPayload(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return { kind: 'empty' };
+  const parts = raw.split(/\s+/).filter(Boolean);
+  const cmd = String(parts[0] || '').split('@')[0].toLowerCase();
+  if (cmd !== '/start') return { kind: 'not_start' };
+  if (parts.length === 1) return { kind: 'plain' };
+  const code = parts.slice(1).join('');
+  if (!INVITE_CODE_RE.test(code)) return { kind: 'bad_code' };
+  return { kind: 'invite', code };
+}
+
+function inviteRefusal(invite, now) {
+  if (!invite || !invite.id) return 'not_found';
+  if (invite.revoked_at) return 'revoked';
+  const ts = now ? new Date(now).getTime() : Date.now();
+  if (invite.expires_at) {
+    const exp = new Date(invite.expires_at).getTime();
+    if (Number.isFinite(exp) && exp <= ts) return 'expired';
+  }
+  if (invite.max_uses != null) {
+    const max = Number(invite.max_uses);
+    const used = Number(invite.uses_count || 0);
+    if (Number.isFinite(max) && used >= max) return 'exhausted';
+  }
+  return null;
+}
+
+function inviteRefusalText(reason) {
+  switch (reason) {
+    case 'revoked':
+      return 'Это приглашение отозвано.';
+    case 'expired':
+      return 'Срок действия приглашения истёк.';
+    case 'exhausted':
+      return 'Приглашение уже использовали максимальное число раз.';
+    case 'bad_code':
+      return 'Некорректный код приглашения. Проверьте ссылку и попробуйте ещё раз.';
+    case 'not_found':
+    default:
+      return 'Приглашение не найдено. Проверьте ссылку или попросите новую у владельца курса.';
+  }
+}
+
+function welcomeText({ isNew, joinedCourse, courseTitle } = {}) {
+  if (joinedCourse) {
+    const title = escapeHtml(courseTitle ? String(courseTitle) : 'курс');
+    return `Вы подключены к курсу «${title}».\n\nКоманды:\n/quiz — квиз по лекции\n/stop — прервать сессию\n/help — справка`;
+  }
+  if (isNew) {
+    return 'Добро пожаловать!\n\nУ вас своё пространство с бесплатной квотой на лекции.\n/quiz — квиз (если есть доступные курсы)\n/help — справка\n\nЕсли есть ссылка-приглашение — откройте её, чтобы подключиться к курсу.';
+  }
+  return 'Снова здравствуйте!\n\nКоманды:\n/quiz — квиз по лекции\n/stop — прервать сессию\n/help — справка\n/invite, /invites — для владельца курса';
+}
+
+function buildInviteLink(botUsername, code) {
+  const bot = String(botUsername || '').replace(/^@/, '');
+  const payload = String(code || '');
+  if (!bot || !INVITE_CODE_RE.test(payload)) return null;
+  // Invite alphabet is ASCII; Telegram start payload max 64 bytes.
+  if (payload.length > 64) return null;
+  return `https://t.me/${bot}?start=${payload}`;
+}
+
+function inviteCoursesKeyboard(courses) {
+  return inlineKeyboardRows(
+    (courses || []).map((c) => [
+      {
+        text: String(c.title || 'Курс').slice(0, 60),
+        callback_data: `inv:course:${c.id}`,
+      },
+    ]),
+  );
+}
+
+function buildInviteCoursesPage(courses, offset) {
+  const all = (courses || []).filter((c) => c && c.id);
+  const total = all.length;
+  const pageSize = COURSE_PAGE_SIZE;
+  const start = clampPageOffset(offset, pageSize, total);
+  const page = all.slice(start, start + pageSize);
+  const keyboard = padItemRows(inviteCoursesKeyboard(page), pageSize);
+  keyboard.inline_keyboard.push(
+    navButtons({ kind: 'inv_courses', offset: start, pageSize, total }),
+  );
+  return {
+    keyboard,
+    total,
+    offset: start,
+    shown: page.length,
+    pageSize,
+    kb_rows: pageSize + 1,
+    out_text: pageCaption('Выберите курс для приглашения:', start, pageSize, total),
+  };
+}
+
+function invitesListKeyboard(invites, startIndex = 0) {
+  return inlineKeyboardRows(
+    (invites || []).map((inv, i) => [
+      {
+        text: `Отозвать ${startIndex + i + 1}`,
+        callback_data: `inv:revoke:${inv.id}`,
+      },
+    ]),
+  );
+}
+
+function formatInviteListLines(invites, startIndex = 0) {
+  const lines = ['Активные приглашения:'];
+  const list = invites || [];
+  if (!list.length) {
+    lines.push('Пока нет. Создайте: /invite');
+    return lines.join('\n');
+  }
+  list.forEach((inv, i) => {
+    const title = escapeHtml(String(inv.course_title || 'Курс')).slice(0, 40);
+    const used = Number(inv.uses_count || 0);
+    const max = inv.max_uses == null ? '∞' : String(inv.max_uses);
+    let exp = 'без срока';
+    if (inv.expires_at) {
+      const d = new Date(inv.expires_at);
+      if (Number.isFinite(d.getTime())) {
+        exp = d.toISOString().slice(0, 10);
+      }
+    }
+    lines.push(`${startIndex + i + 1}. ${title} — ${used}/${max}, до ${exp}`);
+  });
+  lines.push('');
+  lines.push('Кнопка «Отозвать N» под сообщением — по номеру в списке.');
+  return lines.join('\n');
+}
+
+function buildInvitesListPage(invites, offset) {
+  const all = (invites || []).filter((i) => i && i.id);
+  const total = all.length;
+  const pageSize = LECTURE_PAGE_SIZE;
+  const start = clampPageOffset(offset, pageSize, total);
+  const page = all.slice(start, start + pageSize);
+  const keyboard = padItemRows(invitesListKeyboard(page, start), pageSize);
+  keyboard.inline_keyboard.push(
+    navButtons({ kind: 'invites', offset: start, pageSize, total }),
+  );
+  return {
+    keyboard,
+    total,
+    offset: start,
+    shown: page.length,
+    pageSize,
+    kb_rows: total ? pageSize + 1 : 0,
+    out_text: formatInviteListLines(page, start),
+  };
+}
+
 function parseCallback(data) {
   const raw = String(data || '');
   if (raw === 'noop') {
@@ -377,6 +530,16 @@ function parseCallback(data) {
     if (!Number.isFinite(offset) || offset < 0) return { kind: 'unknown', raw };
     return { kind: 'page_courses', offset: Math.floor(offset) };
   }
+  if (raw.startsWith('page:invcourses:')) {
+    const offset = Number(raw.slice('page:invcourses:'.length));
+    if (!Number.isFinite(offset) || offset < 0) return { kind: 'unknown', raw };
+    return { kind: 'page_inv_courses', offset: Math.floor(offset) };
+  }
+  if (raw.startsWith('page:invites:')) {
+    const offset = Number(raw.slice('page:invites:'.length));
+    if (!Number.isFinite(offset) || offset < 0) return { kind: 'unknown', raw };
+    return { kind: 'page_invites', offset: Math.floor(offset) };
+  }
   if (raw.startsWith('page:lectures:')) {
     const rest = raw.slice('page:lectures:'.length);
     const idx = rest.lastIndexOf(':');
@@ -385,6 +548,12 @@ function parseCallback(data) {
     const offset = Number(rest.slice(idx + 1));
     if (!courseId || !Number.isFinite(offset) || offset < 0) return { kind: 'unknown', raw };
     return { kind: 'page_lectures', courseId, offset: Math.floor(offset) };
+  }
+  if (raw.startsWith('inv:course:')) {
+    return { kind: 'inv_course', courseId: raw.slice('inv:course:'.length) };
+  }
+  if (raw.startsWith('inv:revoke:')) {
+    return { kind: 'inv_revoke', inviteId: raw.slice('inv:revoke:'.length) };
   }
   if (raw.startsWith('course:')) {
     return { kind: 'course', courseId: raw.slice(7) };
@@ -433,6 +602,7 @@ module.exports = {
   CHOICES,
   COURSE_PAGE_SIZE,
   LECTURE_PAGE_SIZE,
+  INVITE_CODE_RE,
   hashSeed,
   mulberry32,
   shuffle,
@@ -445,17 +615,27 @@ module.exports = {
   nextKeyboard,
   coursesKeyboard,
   lecturesKeyboard,
+  inviteCoursesKeyboard,
+  invitesListKeyboard,
   padItemRows,
   pageCaption,
   navButtons,
   clampPageOffset,
   buildCoursesPage,
   buildLecturesPage,
+  buildInviteCoursesPage,
+  buildInvitesListPage,
+  formatInviteListLines,
   explanationFor,
   formatFeedback,
   formatSummary,
   ratingForAnswer,
   computeResponseMs,
+  parseStartPayload,
+  inviteRefusal,
+  inviteRefusalText,
+  welcomeText,
+  buildInviteLink,
   parseCallback,
   uniquePreserve,
   tallyAnswer,
