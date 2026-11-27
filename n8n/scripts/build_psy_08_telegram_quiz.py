@@ -154,9 +154,8 @@ def tg_send_markup(
     }
 
 
-def switch_nav_variant(name: str, x: int, y: int) -> dict:
-    """Switch on $json.nav_variant: none / next / prev / both."""
-    cases = ["none", "next", "prev", "both"]
+def switch_keyboard_variant(name: str, x: int, y: int, cases: list[str]) -> dict:
+    """Switch on $json.keyboard_variant (e.g. 2/none, 1/prev)."""
     values = []
     for case in cases:
         values.append(
@@ -170,7 +169,7 @@ def switch_nav_variant(name: str, x: int, y: int) -> dict:
                     "conditions": [
                         {
                             "id": nid(),
-                            "leftValue": "={{ $json.nav_variant }}",
+                            "leftValue": "={{ $json.keyboard_variant }}",
                             "rightValue": case,
                             "operator": {"type": "string", "operation": "equals"},
                         }
@@ -194,35 +193,43 @@ def switch_nav_variant(name: str, x: int, y: int) -> dict:
     }
 
 
-def append_paged_keyboard_outs(
+def append_keyboard_variant_outs(
     nodes: list,
     connections: dict,
     *,
     prefix: str,
-    item_rows: int,
+    page_size: int,
     x: int,
     y: int,
     switch_from: str,
     switch_src_output: int = 0,
 ) -> None:
-    """Wire Switch nav_variant → four Telegram outs (item pad kept; nav only when needed)."""
-    sw = switch_nav_variant(f"IF — {prefix} Nav", x, y)
+    """Wire Switch keyboard_variant → outs for each itemsOnPage × nav_variant.
+
+    Courses page_size=2 → 8 outs; lectures page_size=4 → 16 outs. No noop item pads.
+    """
+    navs = ["none", "next", "prev", "both"]
+    cases: list[str] = []
+    for n_items in range(1, page_size + 1):
+        for nav in navs:
+            cases.append(f"{n_items}/{nav}")
+
+    sw = switch_keyboard_variant(f"IF — {prefix} Kb", x, y, cases)
     nodes.append(sw)
     link(connections, switch_from, sw["name"], src_output=switch_src_output)
 
-    variants = [
-        ("none", False, 1, 0),
-        ("next", True, 1, 120),
-        ("prev", True, 1, 240),
-        ("both", True, 2, 360),
-    ]
-    for idx, (case, paged, nav_cols, dy) in enumerate(variants):
+    for idx, case in enumerate(cases):
+        n_items_s, nav = case.split("/", 1)
+        n_items = int(n_items_s)
+        paged = nav != "none"
+        nav_cols = 2 if nav == "both" else 1
+        dy = (idx % 8) * 100 + (idx // 8) * 20
         out = tg_send_markup(
             f"Out — {prefix} ({case})",
-            x + 160,
+            x + 180,
             y + dy,
             item_expr="$json",
-            n_rows=item_rows,
+            n_rows=n_items,
             cols=1,
             paged=paged,
             nav_cols=nav_cols if paged else None,
@@ -542,6 +549,8 @@ return [{{ json: {{
   kb_rows: built.kb_rows,
   nav_variant: built.nav_variant || 'none',
   has_nav: !!built.has_nav,
+  items_on_page: built.items_on_page || 0,
+  keyboard_variant: built.keyboard_variant || '0/none',
   list_total: built.total,
   list_offset: built.offset,
 }} }}];
@@ -565,6 +574,8 @@ return [{{ json: {{
   kb_rows: built.kb_rows,
   nav_variant: built.nav_variant || 'none',
   has_nav: !!built.has_nav,
+  items_on_page: built.items_on_page || 0,
+  keyboard_variant: built.keyboard_variant || '0/none',
   list_total: built.total,
   list_offset: built.offset,
 }} }}];
@@ -1115,6 +1126,8 @@ return [{{ json: {{
   kb_rows: built.kb_rows,
   nav_variant: built.nav_variant || 'none',
   has_nav: !!built.has_nav,
+  items_on_page: built.items_on_page || 0,
+  keyboard_variant: built.keyboard_variant || '0/none',
 }} }}];
 """,
             1520,
@@ -1140,11 +1153,11 @@ return [{{ json: {{
             chat_id="={{ $json.chat_id }}",
         )
     )
-    append_paged_keyboard_outs(
+    append_keyboard_variant_outs(
         nodes,
         connections,
         prefix="Invite Courses",
-        item_rows=COURSE_PAGE_SIZE,
+        page_size=COURSE_PAGE_SIZE,
         x=1760,
         y=900,
         switch_from="IF — Has Invite Courses",
@@ -1285,6 +1298,8 @@ return [{{ json: {{
   kb_rows: built.kb_rows,
   nav_variant: built.nav_variant || 'none',
   has_nav: !!built.has_nav,
+  items_on_page: built.items_on_page || 0,
+  keyboard_variant: built.keyboard_variant || '0/none',
 }} }}];
 """,
             1520,
@@ -1310,11 +1325,11 @@ return [{{ json: {{
             chat_id="={{ $json.chat_id }}",
         )
     )
-    append_paged_keyboard_outs(
+    append_keyboard_variant_outs(
         nodes,
         connections,
         prefix="Invites",
-        item_rows=LECTURE_PAGE_SIZE,
+        page_size=LECTURE_PAGE_SIZE,
         x=1760,
         y=1220,
         switch_from="IF — Has Invites Kb",
@@ -1405,7 +1420,7 @@ ORDER BY c.title;
         )
     )
     nodes.append(code("Run — Format Courses", format_courses_js(quiz_lib), 1520, 1000))
-    # Empty list → plain text; otherwise nav_variant → fixed Telegram keyboards.
+    # Empty list → plain text; otherwise keyboard_variant → fixed Telegram keyboards.
     nodes.append(
         iff(
             "IF — Has Courses",
@@ -1425,11 +1440,11 @@ ORDER BY c.title;
             chat_id="={{ $json.chat_id }}",
         )
     )
-    append_paged_keyboard_outs(
+    append_keyboard_variant_outs(
         nodes,
         connections,
         prefix="Courses",
-        item_rows=COURSE_PAGE_SIZE,
+        page_size=COURSE_PAGE_SIZE,
         x=1760,
         y=1000,
         switch_from="IF — Has Courses",
@@ -1486,11 +1501,11 @@ ORDER BY COALESCE(l.source_meta #>> '{drive,folder_path,0}', l.title, l.id::text
             chat_id="={{ $json.chat_id }}",
         )
     )
-    append_paged_keyboard_outs(
+    append_keyboard_variant_outs(
         nodes,
         connections,
         prefix="Lectures",
-        item_rows=LECTURE_PAGE_SIZE,
+        page_size=LECTURE_PAGE_SIZE,
         x=1760,
         y=1240,
         switch_from="IF — Has Lectures",

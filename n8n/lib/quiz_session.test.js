@@ -17,6 +17,7 @@ const {
   buildInviteLink,
   buildInviteCoursesPage,
   buildInvitesListPage,
+  keyboardVariant,
   pageKeyboardVariant,
   tallyAnswer,
   ratingForAnswer,
@@ -167,22 +168,28 @@ test('parseCallback covers course/lecture/answer/next/page/noop', () => {
   });
 });
 
-test('pageKeyboardVariant covers none/next/both/prev', () => {
-  assert.equal(pageKeyboardVariant(2, 0, 2, 2).nav_variant, 'none');
+test('keyboardVariant keys itemsOnPage × nav_variant without pads', () => {
+  assert.equal(keyboardVariant(2, 0, 4, 2).key, '2/none');
+  assert.equal(keyboardVariant(1, 4, 4, 5).key, '1/prev');
+  assert.equal(keyboardVariant(4, 0, 4, 9).key, '4/next');
+  assert.equal(keyboardVariant(4, 4, 4, 9).key, '4/both');
+  assert.equal(keyboardVariant(1, 0, 2, 1).key, '1/none');
+  assert.equal(keyboardVariant(2, 0, 2, 5).key, '2/next');
+  assert.equal(keyboardVariant(2, 2, 2, 5).key, '2/both');
+  assert.equal(keyboardVariant(1, 4, 2, 5).key, '1/prev');
+  assert.equal(keyboardVariant(2, 0, 2, 2).has_nav, false);
+  assert.equal(keyboardVariant(2, 0, 2, 5).kb_rows, 3);
+  assert.equal(keyboardVariant(2, 0, 2, 2).kb_rows, 2);
   assert.equal(pageKeyboardVariant(2, 0, 2, 5).nav_variant, 'next');
-  assert.equal(pageKeyboardVariant(2, 2, 2, 5).nav_variant, 'both');
-  assert.equal(pageKeyboardVariant(1, 4, 2, 5).nav_variant, 'prev');
-  assert.equal(pageKeyboardVariant(2, 0, 2, 2).has_nav, false);
-  assert.equal(pageKeyboardVariant(2, 0, 2, 5).kb_rows, 3);
-  assert.equal(pageKeyboardVariant(2, 0, 2, 2).kb_rows, 2);
 });
 
-test('buildCoursesPage paginates and pads short lists', () => {
+test('buildCoursesPage paginates without noop item pads', () => {
   const many = Array.from({ length: 5 }, (_, i) => ({
     id: `c${i}`,
     title: `Курс ${i}`,
   }));
   const page0 = buildCoursesPage(many, 0);
+  assert.equal(page0.keyboard_variant, '2/next');
   assert.equal(page0.nav_variant, 'next');
   assert.equal(page0.kb_rows, COURSE_PAGE_SIZE + 1);
   assert.equal(page0.keyboard.inline_keyboard.length, COURSE_PAGE_SIZE + 1);
@@ -195,6 +202,7 @@ test('buildCoursesPage paginates and pads short lists', () => {
   assert.equal(nav0[0].text, 'Ещё');
 
   const page1 = buildCoursesPage(many, 2);
+  assert.equal(page1.keyboard_variant, '2/both');
   assert.equal(page1.nav_variant, 'both');
   assert.equal(page1.keyboard.inline_keyboard[0][0].callback_data, 'course:c2');
   assert.equal(page1.keyboard.inline_keyboard[COURSE_PAGE_SIZE][0].callback_data, 'page:courses:0');
@@ -202,19 +210,22 @@ test('buildCoursesPage paginates and pads short lists', () => {
   assert.equal(page1.keyboard.inline_keyboard[COURSE_PAGE_SIZE][1].callback_data, 'page:courses:4');
 
   const page2 = buildCoursesPage(many, 4);
+  assert.equal(page2.keyboard_variant, '1/prev');
   assert.equal(page2.nav_variant, 'prev');
   assert.equal(page2.shown, 1);
-  assert.equal(page2.keyboard.inline_keyboard[1][0].callback_data, 'noop');
-  assert.equal(page2.keyboard.inline_keyboard[1][0].text, '·');
-  assert.equal(page2.keyboard.inline_keyboard[COURSE_PAGE_SIZE].length, 1);
-  assert.equal(page2.keyboard.inline_keyboard[COURSE_PAGE_SIZE][0].text, 'Назад');
+  assert.equal(page2.keyboard.inline_keyboard.length, 2);
+  assert.equal(page2.keyboard.inline_keyboard[0][0].callback_data, 'course:c4');
+  assert.equal(page2.keyboard.inline_keyboard[1].length, 1);
+  assert.equal(page2.keyboard.inline_keyboard[1][0].text, 'Назад');
+  assert.ok(!page2.keyboard.inline_keyboard.some((row) => row[0]?.callback_data === 'noop'));
   assert.match(page2.out_text, /5–5 из 5/);
 
   const short = buildCoursesPage([{ id: 'only', title: 'Один' }], 0);
+  assert.equal(short.keyboard_variant, '1/none');
   assert.equal(short.nav_variant, 'none');
   assert.equal(short.out_text, 'Выберите курс:');
-  assert.equal(short.keyboard.inline_keyboard.length, COURSE_PAGE_SIZE);
-  assert.equal(short.keyboard.inline_keyboard[1][0].callback_data, 'noop');
+  assert.equal(short.keyboard.inline_keyboard.length, 1);
+  assert.equal(short.keyboard.inline_keyboard[0][0].callback_data, 'course:only');
 });
 
 test('buildLecturesPage paginates with course id in nav callbacks', () => {
@@ -223,6 +234,7 @@ test('buildLecturesPage paginates with course id in nav callbacks', () => {
     title: `Лекция ${i}`,
   }));
   const page0 = buildLecturesPage(lectures, 0, UUID);
+  assert.equal(page0.keyboard_variant, '4/next');
   assert.equal(page0.nav_variant, 'next');
   assert.equal(page0.kb_rows, LECTURE_PAGE_SIZE + 1);
   assert.equal(page0.keyboard.inline_keyboard.length, LECTURE_PAGE_SIZE + 1);
@@ -232,6 +244,7 @@ test('buildLecturesPage paginates with course id in nav callbacks', () => {
   assert.ok(Buffer.byteLength(nextCb, 'utf8') <= 64);
 
   const page1 = buildLecturesPage(lectures, 4, UUID);
+  assert.equal(page1.keyboard_variant, '4/both');
   assert.equal(page1.nav_variant, 'both');
   assert.equal(page1.keyboard.inline_keyboard[0][0].callback_data, 'lecture:l4');
   assert.equal(
@@ -244,10 +257,18 @@ test('buildLecturesPage paginates with course id in nav callbacks', () => {
   );
 
   const page2 = buildLecturesPage(lectures, 8, UUID);
+  assert.equal(page2.keyboard_variant, '1/prev');
   assert.equal(page2.nav_variant, 'prev');
   assert.equal(page2.shown, 1);
+  assert.equal(page2.keyboard.inline_keyboard.length, 2);
   assert.match(page2.out_text, /9–9 из 9/);
-  assert.equal(page2.keyboard.inline_keyboard[LECTURE_PAGE_SIZE][0].text, 'Назад');
+  assert.equal(page2.keyboard.inline_keyboard[1][0].text, 'Назад');
+  assert.ok(!page2.keyboard.inline_keyboard.some((row) => row[0]?.text === '·'));
+
+  const two = buildLecturesPage(lectures.slice(0, 2), 0, UUID);
+  assert.equal(two.keyboard_variant, '2/none');
+  assert.equal(two.keyboard.inline_keyboard.length, 2);
+  assert.ok(!two.keyboard.inline_keyboard.some((row) => row[0]?.callback_data === 'noop'));
 });
 
 test('UUID course/lecture callback_data stay within Telegram 64-byte limit', () => {
@@ -265,6 +286,7 @@ test('empty courses page helper still reports zero total (format node shows empt
   const empty = buildCoursesPage([], 0);
   assert.equal(empty.total, 0);
   assert.equal(empty.shown, 0);
+  assert.equal(empty.keyboard_variant, '0/none');
   assert.equal(empty.out_text, 'Выберите курс:');
 });
 
@@ -396,6 +418,7 @@ test('invite course/revoke callbacks stay within 64 bytes', () => {
     0,
   );
   assert.equal(page.keyboard.inline_keyboard[0][0].callback_data, 'inv:course:c1');
+  assert.equal(page.keyboard_variant, '2/next');
   assert.equal(page.nav_variant, 'next');
   assert.equal(page.keyboard.inline_keyboard[COURSE_PAGE_SIZE][0].callback_data, 'page:invcourses:2');
 
@@ -412,9 +435,12 @@ test('invite course/revoke callbacks stay within 64 bytes', () => {
     ],
     0,
   );
+  assert.equal(list.keyboard_variant, '2/none');
+  assert.equal(list.keyboard.inline_keyboard.length, 2);
   assert.equal(list.keyboard.inline_keyboard[0][0].text, 'Отозвать 1');
   assert.equal(list.keyboard.inline_keyboard[1][0].text, 'Отозвать 2');
   assert.equal(list.keyboard.inline_keyboard[0][0].callback_data, `inv:revoke:${UUID}`);
+  assert.ok(!list.keyboard.inline_keyboard.some((row) => row[0]?.callback_data === 'noop'));
   assert.match(list.out_text, /Активные приглашения/);
   assert.match(list.out_text, /A&lt;b&gt;&amp;/);
   assert.doesNotMatch(list.out_text, /<b>/);

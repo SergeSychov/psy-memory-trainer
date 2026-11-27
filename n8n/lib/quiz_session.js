@@ -185,15 +185,6 @@ function lecturesKeyboard(lectures) {
   );
 }
 
-function padItemRows(keyboard, pageSize) {
-  const kb = keyboard || { inline_keyboard: [] };
-  kb.inline_keyboard = kb.inline_keyboard || [];
-  while (kb.inline_keyboard.length < pageSize) {
-    kb.inline_keyboard.push([{ text: '·', callback_data: 'noop' }]);
-  }
-  return kb;
-}
-
 function pageCaption(prefix, offset, pageSize, total) {
   if (!total) return prefix;
   if (total <= pageSize) return prefix;
@@ -203,14 +194,14 @@ function pageCaption(prefix, offset, pageSize, total) {
 }
 
 /**
- * Fixed Telegram keyboards need a nav layout variant:
- * none | next | prev | both. Item rows stay padded to pageSize.
+ * Fixed Telegram keyboard layout key: "<itemsOnPage>/<nav_variant>".
+ * No noop item pads — outs are selected by this key in n8n.
  */
-function pageKeyboardVariant(itemsCount, offset, pageSize, total) {
+function keyboardVariant(itemsOnPage, offset, pageSize, total) {
   const size = Math.max(1, Number(pageSize) || 1);
   const start = Math.max(0, Number(offset) || 0);
   const tot = Math.max(0, Number(total) || 0);
-  const shown = Math.max(0, Math.min(Number(itemsCount) || 0, size));
+  const items = Math.max(0, Math.min(Number(itemsOnPage) || 0, size));
   const hasPrev = start > 0;
   const hasNext = start + size < tot;
   let nav_variant = 'none';
@@ -218,13 +209,23 @@ function pageKeyboardVariant(itemsCount, offset, pageSize, total) {
   else if (hasPrev) nav_variant = 'prev';
   else if (hasNext) nav_variant = 'next';
   return {
+    key: `${items}/${nav_variant}`,
+    items_on_page: items,
     nav_variant,
     has_nav: nav_variant !== 'none',
     has_prev: hasPrev,
     has_next: hasNext,
-    item_rows: size,
-    shown,
-    kb_rows: size + (nav_variant === 'none' ? 0 : 1),
+    kb_rows: items + (nav_variant === 'none' ? 0 : 1),
+  };
+}
+
+/** @deprecated alias — prefer keyboardVariant */
+function pageKeyboardVariant(itemsCount, offset, pageSize, total) {
+  const v = keyboardVariant(itemsCount, offset, pageSize, total);
+  return {
+    ...v,
+    item_rows: v.items_on_page,
+    shown: v.items_on_page,
   };
 }
 
@@ -233,7 +234,7 @@ function navButtons({ kind, offset, pageSize, total, courseId }) {
   const size = Math.max(1, Number(pageSize) || 1);
   const prevOffset = Math.max(0, start - size);
   const nextOffset = start + size;
-  const variant = pageKeyboardVariant(0, start, size, total);
+  const variant = keyboardVariant(0, start, size, total);
   let prevCb = 'noop';
   let nextCb = 'noop';
   if (kind === 'courses') {
@@ -269,8 +270,12 @@ function clampPageOffset(offset, pageSize, total) {
   return start;
 }
 
-function finalizePagedKeyboard(keyboard, { kind, offset, pageSize, total, courseId }) {
-  const variant = pageKeyboardVariant(0, offset, pageSize, total);
+function finalizePagedKeyboard(keyboard, { kind, offset, pageSize, total, courseId, itemsOnPage }) {
+  const items =
+    itemsOnPage == null
+      ? (keyboard.inline_keyboard || []).length
+      : Number(itemsOnPage) || 0;
+  const variant = keyboardVariant(items, offset, pageSize, total);
   if (variant.has_nav) {
     keyboard.inline_keyboard.push(
       navButtons({ kind, offset, pageSize, total, courseId }),
@@ -288,12 +293,13 @@ function buildCoursesPage(courses, offset) {
   const pageSize = COURSE_PAGE_SIZE;
   const start = clampPageOffset(offset, pageSize, total);
   const page = all.slice(start, start + pageSize);
-  const keyboard = padItemRows(coursesKeyboard(page), pageSize);
+  const keyboard = coursesKeyboard(page);
   const fin = finalizePagedKeyboard(keyboard, {
     kind: 'courses',
     offset: start,
     pageSize,
     total,
+    itemsOnPage: page.length,
   });
   return {
     keyboard: fin.keyboard,
@@ -304,6 +310,8 @@ function buildCoursesPage(courses, offset) {
     kb_rows: fin.kb_rows,
     nav_variant: fin.nav_variant,
     has_nav: fin.has_nav,
+    items_on_page: fin.items_on_page,
+    keyboard_variant: fin.key,
     out_text: pageCaption('Выберите курс:', start, pageSize, total),
   };
 }
@@ -314,13 +322,14 @@ function buildLecturesPage(lectures, offset, courseId) {
   const pageSize = LECTURE_PAGE_SIZE;
   const start = clampPageOffset(offset, pageSize, total);
   const page = all.slice(start, start + pageSize);
-  const keyboard = padItemRows(lecturesKeyboard(page), pageSize);
+  const keyboard = lecturesKeyboard(page);
   const fin = finalizePagedKeyboard(keyboard, {
     kind: 'lectures',
     offset: start,
     pageSize,
     total,
     courseId,
+    itemsOnPage: page.length,
   });
   return {
     keyboard: fin.keyboard,
@@ -331,6 +340,8 @@ function buildLecturesPage(lectures, offset, courseId) {
     kb_rows: fin.kb_rows,
     nav_variant: fin.nav_variant,
     has_nav: fin.has_nav,
+    items_on_page: fin.items_on_page,
+    keyboard_variant: fin.key,
     out_text: pageCaption('Выберите лекцию:', start, pageSize, total),
   };
 }
@@ -512,12 +523,13 @@ function buildInviteCoursesPage(courses, offset) {
   const pageSize = COURSE_PAGE_SIZE;
   const start = clampPageOffset(offset, pageSize, total);
   const page = all.slice(start, start + pageSize);
-  const keyboard = padItemRows(inviteCoursesKeyboard(page), pageSize);
+  const keyboard = inviteCoursesKeyboard(page);
   const fin = finalizePagedKeyboard(keyboard, {
     kind: 'inv_courses',
     offset: start,
     pageSize,
     total,
+    itemsOnPage: page.length,
   });
   return {
     keyboard: fin.keyboard,
@@ -528,6 +540,8 @@ function buildInviteCoursesPage(courses, offset) {
     kb_rows: fin.kb_rows,
     nav_variant: fin.nav_variant,
     has_nav: fin.has_nav,
+    items_on_page: fin.items_on_page,
+    keyboard_variant: fin.key,
     out_text: pageCaption('Выберите курс для приглашения:', start, pageSize, total),
   };
 }
@@ -584,15 +598,18 @@ function buildInvitesListPage(invites, offset) {
       kb_rows: 0,
       nav_variant: 'none',
       has_nav: false,
+      items_on_page: 0,
+      keyboard_variant: '0/none',
       out_text: formatInviteListLines([], 0),
     };
   }
-  const keyboard = padItemRows(invitesListKeyboard(page, start), pageSize);
+  const keyboard = invitesListKeyboard(page, start);
   const fin = finalizePagedKeyboard(keyboard, {
     kind: 'invites',
     offset: start,
     pageSize,
     total,
+    itemsOnPage: page.length,
   });
   return {
     keyboard: fin.keyboard,
@@ -603,6 +620,8 @@ function buildInvitesListPage(invites, offset) {
     kb_rows: fin.kb_rows,
     nav_variant: fin.nav_variant,
     has_nav: fin.has_nav,
+    items_on_page: fin.items_on_page,
+    keyboard_variant: fin.key,
     out_text: formatInviteListLines(page, start),
   };
 }
@@ -704,8 +723,8 @@ module.exports = {
   lecturesKeyboard,
   inviteCoursesKeyboard,
   invitesListKeyboard,
-  padItemRows,
   pageCaption,
+  keyboardVariant,
   pageKeyboardVariant,
   navButtons,
   clampPageOffset,
