@@ -42,12 +42,20 @@ PROBE_HEAD_BYTES = 8 * 1024 * 1024
 FFPROBE_TIMEOUT_SEC = 15
 CHUNK = 1024 * 1024
 DISK_RECHECK_EVERY = 64  # чанков
+DEFAULT_FETCH_MAX_SEC = 3300
+DEFAULT_MIN_BYTES_PER_MIN = 64 * 1024
+SPEED_WINDOW_SEC = 60.0
+# MIME/контейнеры плейлистов и «картинка как видео» — не скачиваем как лекцию.
+PLAYLIST_MIME_MARKERS = ("mpegurl", "scpls", "asx", "dash+xml")
+UNSAFE_FORMAT_NAMES = frozenset({"hls", "concat", "sdp", "dash", "image2"})
 
 
 @dataclass(frozen=True)
 class SourceConfig:
     timeout_sec: float = 30.0
     probe_timeout_sec: float = 30.0
+    fetch_max_sec: float = float(DEFAULT_FETCH_MAX_SEC)
+    min_bytes_per_min: int = DEFAULT_MIN_BYTES_PER_MIN
     yandex_api_base: str = "https://cloud-api.yandex.net"
     gdrive_base: str = "https://drive.google.com"
     min_free_mb: int = 3072
@@ -101,8 +109,13 @@ def yandex_public_key(url: str) -> str:
 
 
 def classify_media(mime: str | None, name: str | None) -> str | None:
-    """audio | video | text по MIME и расширению. None — не удалось понять."""
+    """audio | video | text по MIME и расширению. None — не удалось понять.
+
+    Плейлистные MIME (mpegurl / scpls / asx / dash+xml) — SourceError unsupported_type.
+    """
     mime = (mime or "").split(";", 1)[0].strip().lower()
+    if mime and any(marker in mime for marker in PLAYLIST_MIME_MARKERS):
+        raise SourceError("unsupported_type", 400, "playlist_mime")
     if mime.startswith("audio/"):
         return "audio"
     if mime.startswith("video/"):
@@ -118,6 +131,18 @@ def classify_media(mime: str | None, name: str | None) -> str | None:
         if ext in TEXT_EXT:
             return "text"
     return None
+
+
+def reject_unsafe_container(path: Path | None = None, info: dict | None = None) -> None:
+    """Отклоняет hls/concat/sdp/dash/image2 по format_name ffprobe."""
+    payload = info if info is not None else (ffprobe_json(path=path) if path is not None else None)
+    if not payload:
+        return
+    raw = ((payload.get("format") or {}).get("format_name") or "")
+    names = {part.strip().lower() for part in str(raw).split(",") if part.strip()}
+    bad = names & UNSAFE_FORMAT_NAMES
+    if bad:
+        raise SourceError("unsupported_type", 400, "unsafe_format")
 
 
 def _name_from_url(url: str) -> str | None:
@@ -187,7 +212,13 @@ def open_source(kind: str, url: str, cfg: SourceConfig, policy: Policy, deadline
     if kind == "gdrive_public":
         return Opened(_open_gdrive(url, cfg, policy, deadline))
     if kind == "direct_url":
-        return Opened(_open_media(url, cfg, policy, deadline))
+        try:
+            return Opened(_open_media(url, cfg, policy, deadline))
+        except SourceError as exc:
+            # У прямой ссылки 404/410 — «файл пропал / битая ссылка», не «не публично».
+            if exc.code == "not_public" and exc.reason in ("http_404", "http_410"):
+                raise SourceError("download_failed", 502, exc.reason) from None
+            raise
     raise _bad_link("kind")
 
 
@@ -208,11 +239,21 @@ def ffprobe_json(*, data: bytes | None = None, path: Path | None = None) -> dict
     """Метаданные через ffprobe. Байты идут в stdin, сеть ffprobe закрыта whitelist'ом."""
     if not ffprobe_ready():
         return None
-    cmd = ["ffprobe", "-v", "error", "-print_format", "json", "-show_format", "-show_streams"]
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-protocol_whitelist",
+        "file,pipe",
+        "-print_format",
+        "json",
+        "-show_format",
+        "-show_streams",
+    ]
     if path is not None:
-        cmd += ["-protocol_whitelist", "file", "-i", str(path)]
+        cmd += ["-i", str(path)]
     else:
-        cmd += ["-protocol_whitelist", "pipe", "-i", "pipe:0"]
+        cmd += ["-i", "pipe:0"]
     try:
         proc = subprocess.run(
             cmd,
@@ -339,12 +380,15 @@ def fetch_url(
     disk_free_mb: Callable[[Path], int],
     touch: Callable[[], None],
 ) -> dict[str, object]:
-    """Стрим в <dst>.part, жёсткий max_bytes, проверка диска, затем rename. Под job-lock."""
+    """Стрим в <dst>.part, жёсткий max_bytes, общий дедлайн и мин. скорость. Под job-lock."""
     started = time.perf_counter()
-    opened = open_source(kind, url, cfg, policy, None)
+    deadline = time.monotonic() + float(cfg.fetch_max_sec)
+    opened = open_source(kind, url, cfg, policy, deadline)
     part = dst.with_name(dst.name + ".part")
     try:
         meta = describe(opened)
+        # MIME плейлиста отсекаем до записи на диск.
+        classify_media(str(meta["mime"] or ""), meta["name"])  # type: ignore[arg-type]
         size = meta["size_bytes"]
         if size is not None and size > max_bytes:  # type: ignore[operator]
             raise SourceError("too_large", 413, "declared_size")
@@ -354,17 +398,28 @@ def fetch_url(
             raise SourceError("not enough disk space", 507, "disk_space")
         written = 0
         chunks = 0
+        window_start = time.monotonic()
+        window_bytes = 0
         with part.open("wb") as out:
             while True:
+                if time.monotonic() > deadline:
+                    raise SourceError("timeout", 504, "deadline")
                 chunk = opened.resp.read(CHUNK)
                 if not chunk:
                     break
                 written += len(chunk)
+                window_bytes += len(chunk)
                 if written > max_bytes:
                     raise SourceError("too_large", 413, "actual_size")
                 out.write(chunk)
                 chunks += 1
                 touch()
+                now = time.monotonic()
+                if now - window_start >= SPEED_WINDOW_SEC:
+                    if window_bytes < int(cfg.min_bytes_per_min):
+                        raise SourceError("timeout", 504, "too_slow")
+                    window_start = now
+                    window_bytes = 0
                 if chunks % DISK_RECHECK_EVERY == 0 and disk_free_mb(dst.parent) < max(256, cfg.min_free_mb // 4):
                     raise SourceError("not enough disk space", 507, "disk_space_during")
         declared = opened.resp.content_length if opened.resp.status == 200 else None
@@ -373,6 +428,7 @@ def fetch_url(
         if written == 0:
             raise SourceError("download_failed", 502, "empty_body")
         os.replace(part, dst)
+        reject_unsafe_container(dst)
     except OSError:
         raise SourceError("download_failed", 502, "write_failed") from None
     finally:

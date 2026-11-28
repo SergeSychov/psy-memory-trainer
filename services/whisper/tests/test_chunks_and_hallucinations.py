@@ -254,9 +254,11 @@ def test_window_ffmpeg_args_seek_and_limit_the_slice():
     assert "1.000" in args
     assert args[args.index("-t") + 1] == "300.000"
     assert "14400" not in args
+    assert args[args.index("-protocol_whitelist") + 1] == "file,pipe"
     head = window_ffmpeg_args("/data/a.wav", 0, 10)
     assert "-ss" not in head
     assert head[head.index("-t") + 1] == "10.000"
+    assert head[head.index("-protocol_whitelist") + 1] == "file,pipe"
 
 
 def test_psy03_passes_course_key_and_stays_inactive():

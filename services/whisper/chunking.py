@@ -310,7 +310,7 @@ def window_ffmpeg_args(path: str, start: float, end: float) -> list[str]:
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin"]
     if coarse > 0:
         cmd.extend(["-ss", f"{coarse:.3f}"])
-    cmd.extend(["-i", path])
+    cmd.extend(["-protocol_whitelist", "file,pipe", "-i", path])
     if preroll > 0:
         cmd.extend(["-ss", f"{preroll:.3f}"])
     cmd.extend(

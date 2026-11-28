@@ -10,9 +10,9 @@ Self-hosted распознавание. Платного API речи нет. В
 
 Базовый URL задаёт `WHISPER_BASE_URL`. Тело запросов — JSON. Файлы по HTTP не загружаются: в запросе путь внутри `/data` контейнера (относительный путь считается от `/data`). n8n этот каталог не монтирует и файлы не читает: медиа попадает туда через `/drive/fetch`. Путь вне `DATA_DIR` отвечает `400`.
 
-Если задан `WHISPER_TOKEN`, `/extract-audio`, `/transcribe`, `/files/delete`, `/source/probe`, `/source/fetch` и `/inbox/upload` требуют заголовок `Authorization: Bearer <токен>` или `X-Whisper-Token: <токен>`. `/drive/*` вместо этого требуют токен Google в `Authorization` (см. ниже). `/health` токен не проверяет. Без токена сервис можно держать только во внутренней сети Dokploy, порт наружу не публиковать.
+Если задан `WHISPER_TOKEN`, `/extract-audio`, `/transcribe` и `/files/delete` требуют заголовок `Authorization: Bearer <токен>` или `X-Whisper-Token: <токен>` (без токена в env эти старые ручки остаются открытыми — только для внутренней сети). `/source/probe`, `/source/fetch` и `/inbox/upload` всегда требуют непустой `WHISPER_TOKEN` в окружении **и** тот же заголовок: пустой токен → `401`. `/drive/*` вместо этого требуют токен Google в `Authorization` (см. ниже). `/health` токен не проверяет. Порт наружу не публиковать.
 
-Ошибка — JSON `{"error":"..."}`. Коды: `400` путь или файл негодный, `401` токен, `404` файла нет, `403` Drive не дал доступ, `507` не хватает диска, `502` ошибка Drive, `409` уже идёт другая нарезка, распознавание или скачивание, `422` кривое тело, `504` ffmpeg не уложился в `EXTRACT_TIMEOUT_SEC`. У `/source/*` и `/inbox/upload` в `error` короткий код, см. таблицу ниже.
+Ошибка — JSON `{"error":"..."}`. Коды: `400` путь или файл негодный, `401` токен, `404` файла нет, `403` Drive не дал доступ, `507` не хватает диска, `502` ошибка Drive, `409` уже идёт другая нарезка, распознавание, скачивание или слишком много параллельных проб, `422` кривое тело, `504` ffmpeg / дедлайн скачивания. У `/source/*` и `/inbox/upload` в `error` короткий код, см. таблицу ниже.
 
 В лог не пишутся текст транскрипта, `initial_prompt`, имя файла и URL. Пишутся короткий хеш пути или ссылки, модель, длительность, размер и число сегментов. У источников по ссылке в лог попадает только хеш, вид источника, размер и короткая причина отказа (`blocked_address`, `scheme`, `html_instead_of_file` и т.п.).
 
@@ -140,7 +140,7 @@ Self-hosted распознавание. Платного API речи нет. В
 
 ### `POST /source/probe`
 
-Лёгкая проверка источника перед постановкой лекции в очередь. Токен `WHISPER_TOKEN`. **Общий замок не занимает**: идёт параллельно с распознаванием и скачиванием. Общий таймаут 30 с.
+Лёгкая проверка источника перед постановкой лекции в очередь. Токен `WHISPER_TOKEN` **обязателен** (пустой в env → `401`). **Общий job-lock не занимает**. Одновременно не больше **3** проб (`409 busy` при переполнении). Общий таймаут 30 с.
 
 Вход — одно из двух:
 
@@ -149,7 +149,7 @@ Self-hosted распознавание. Платного API речи нет. В
 {"path": "inbox/lecture.mp3"}
 ```
 
-`kind`: `yandex_public` (`disk.yandex.ru|com/d|i/<ключ>`, `yadi.sk/d|i/<ключ>`), `gdrive_public` (`drive.google.com/file/d/<ID>`, `open?id=`, `uc?id=`), `direct_url` (любой https). `path` — файл внутри `/data`, без сети.
+`kind`: `yandex_public` (`disk.yandex.ru|com/d|i/<ключ>`, `yadi.sk/d|i/<ключ>`), `gdrive_public` (`drive.google.com/file/d/<ID>`, `open?id=`, `uc?id=`), `direct_url` (любой https). `path` — **только** файл внутри `inbox/` (не произвольный путь в `/data`).
 
 Выход:
 
@@ -157,27 +157,28 @@ Self-hosted распознавание. Платного API речи нет. В
 {"name": "lecture.mp3", "size_bytes": 52428800, "mime": "audio/mpeg", "duration_sec": 5400.0, "resolved_kind": "audio"}
 ```
 
-* `resolved_kind`: `audio`, `video` или `text` (`text/plain`, `.txt`, `.md`). Определяется по `Content-Type`, расширению и, если они молчат, по потокам ffprobe. Не удалось: `400 unsupported_type`.
+* `resolved_kind`: `audio`, `video` или `text` (`text/plain`, `.txt`, `.md`). Определяется по `Content-Type`, расширению и, если они молчат, по потокам ffprobe. Плейлистные MIME (`mpegurl`, `scpls`, `asx`, `dash+xml`) → `400 unsupported_type`. Не удалось: `400 unsupported_type`.
 * `duration_sec` — best-effort, иначе `null`. Первые 8 МБ тела передаются в ffprobe через stdin (сам ffprobe в сеть не ходит: иначе он обошёл бы защиту от SSRF). Для mp4 с moov в конце и для потоков без заголовка длительности результата не будет. Если ffprobe длительности не дал, но знает битрейт, значение оценивается как `size / bit_rate`. Для `path` ffprobe читает файл целиком.
 * `size_bytes` — `null`, если сервер не прислал размер.
 * Яндекс: публичный API `cloud-api.yandex.net/v1/disk/public/resources`; папка (`type=dir`) → `400 unsupported_link`, нет ресурса → `403 not_public`.
 * Drive: запрос без OAuth. Страница входа или HTML вместо файла → `403 not_public`. Для больших файлов делается единственный дополнительный шаг: тот же адрес с `confirm=t` (ссылки из HTML не читаются и не открываются).
+* `direct_url` при HTTP `404`/`410` → `502 download_failed` (не `not_public`).
 
 ### `POST /source/fetch`
 
-Скачивание в `/data`. Токен `WHISPER_TOKEN`. **Занимает общий замок** (`409 busy` при параллельной нарезке, распознавании или другом скачивании).
+Скачивание в `/data`. Токен `WHISPER_TOKEN` **обязателен**. **Занимает общий замок** (`409 busy` при параллельной нарезке, распознавании или другом скачивании); при ошибке/таймауте замок **освобождается**.
 
 ```json
 {"kind": "gdrive_public", "url": "https://drive.google.com/file/d/<ID>/view", "output_path": "inbox/<lecture_id>.mp4", "max_bytes": 4294967296}
 ```
 
-`output_path` — только внутри `inbox/` (любая глубина, имя `[A-Za-z0-9._-]`, без `.part`). Лимит — меньшее из `max_bytes` и `SOURCE_MAX_BYTES`. Работа как у `/drive/fetch`: стрим кусками по 1 МБ в `<output_path>.part`, проверка `Content-Length` и фактического объёма (`413 too_large`), запас диска `size + WHISPER_MIN_FREE_MB` (`507`), совпадение числа байт с `Content-Length`, `rename`. Пустое тело → `502 download_failed`. При любой ошибке `.part` удаляется.
+`output_path` — только внутри `inbox/` (любая глубина, имя `[A-Za-z0-9._-]`, без `.part`). Лимит — меньшее из `max_bytes` и `SOURCE_MAX_BYTES`. Общий дедлайн скачивания `SOURCE_FETCH_MAX_SEC` (по умолчанию 3300 с) действует и на `open_url`, и на цикл чтения. Минимальная скорость: меньше `SOURCE_MIN_BYTES_PER_MIN` (по умолчанию 64 КиБ) за 60 с → `504 timeout`. Работа как у `/drive/fetch`: стрим кусками по 1 МБ в `<output_path>.part`, проверка `Content-Length` и фактического объёма (`413 too_large`), запас диска `size + WHISPER_MIN_FREE_MB` (`507`), совпадение числа байт с `Content-Length`, `rename`. После записи ffprobe проверяет `format_name`: `hls` / `concat` / `sdp` / `dash` / `image2` → `400 unsupported_type` (файл удаляется). Пустое тело → `502 download_failed`. При любой ошибке `.part` удаляется.
 
 Выход: `output_path`, `size_bytes`, `name`, `mime`, `resolved_kind` (может быть `null`), `elapsed_sec`.
 
 ### `POST /inbox/upload?path=inbox/<имя>`
 
-Сырое тело запроса (не JSON, не multipart) → файл `inbox/<имя>`. Для файлов из чата, которые n8n уже скачал через Bot API. Токен `WHISPER_TOKEN`. Лимит `INBOX_UPLOAD_MAX_BYTES` (25 МБ): по `Content-Length` и по фактическому объёму (`413 too_large`), тело пишется потоком в `.part`. Имя — один сегмент `[A-Za-z0-9][A-Za-z0-9._-]{0,127}`, без `.part`, существующий файл перезаписывается; иное → `400`. Пустое тело → `400`. Замок не занимает.
+Сырое тело запроса (не JSON, не multipart) → файл `inbox/<имя>`. Для файлов из чата, которые n8n уже скачал через Bot API. Токен `WHISPER_TOKEN` **обязателен**. Лимит `INBOX_UPLOAD_MAX_BYTES` (25 МБ): по `Content-Length` и по фактическому объёму (`413 too_large`), тело пишется потоком в `.part`. Имя — один сегмент `[A-Za-z0-9][A-Za-z0-9._-]{0,127}`, без `.part`, существующий файл перезаписывается; иное → `400`. Пустое тело → `400`. После записи — та же проверка `format_name` ffprobe, что у fetch. Замок не занимает.
 
 Выход: `{"path": "/data/inbox/<имя>", "size_bytes": 12345}`.
 
@@ -186,13 +187,13 @@ Self-hosted распознавание. Платного API речи нет. В
 | `error` | HTTP | Когда |
 |---|---|---|
 | `unsupported_link` | 400 | Не та схема или порт, `user:pass@`, папка Drive/Яндекса, чужой хост у Яндекса/Drive, **адрес запрещён защитой от SSRF** (по причине клиенту не говорим, причина только в логе) |
-| `not_public` | 403 | `401/403/404/410` от источника, HTML вместо файла (страница входа, «нет доступа») |
-| `unsupported_type` | 400 | Не аудио, не видео и не текст |
+| `not_public` | 403 | `401/403` от источника (и `404/410` у Яндекс/Drive), HTML вместо файла (страница входа, «нет доступа») |
+| `unsupported_type` | 400 | Не аудио/видео/текст; плейлистный MIME; опасный `format_name` (`hls`/`concat`/`sdp`/`dash`/`image2`) |
 | `too_large` | 413 | Размер больше лимита (по заголовку или по факту) |
-| `download_failed` | 502 | DNS не резолвится, обрыв, `5xx`, больше 5 редиректов, битый сертификат, размер не сошёлся, пустое тело |
+| `download_failed` | 502 | DNS не резолвится, обрыв, `5xx`, больше 5 редиректов, битый сертификат, размер не сошёлся, пустое тело; у `direct_url` ещё `404`/`410` |
 | `download_failed` | 429 | Источник ограничил частоту |
-| `timeout` | 504 | Нет ответа за `SOURCE_TIMEOUT_SEC` на соединение или чтение (у пробы ещё и общие 30 с) |
-| `busy` | 409 | `/source/fetch` при занятом замке |
+| `timeout` | 504 | Нет ответа за `SOURCE_TIMEOUT_SEC`; общий дедлайн `SOURCE_FETCH_MAX_SEC`; слишком медленное скачивание; у пробы ещё и общие 30 с |
+| `busy` | 409 | `/source/fetch` при занятом замке; `/source/probe` при >3 параллельных пробах |
 | `not enough disk space` | 507 | Нет места |
 
 ### Защита от SSRF
@@ -243,9 +244,11 @@ Self-hosted распознавание. Платного API речи нет. В
 | `WHISPER_MIN_FREE_MB` | `3072` | Запас диска сверх размера файла для `/drive/fetch` |
 | `DRIVE_API_BASE` | `https://www.googleapis.com/drive/v3` | Меняется только в тестах |
 | `DRIVE_TIMEOUT_SEC` | `120` | Таймаут сокета к Drive |
-| `WHISPER_TOKEN` | пусто | Токен на `/extract-audio`, `/transcribe`, `/files/delete`, `/source/*`, `/inbox/upload` |
+| `WHISPER_TOKEN` | пусто | Старые ручки: если задан — нужен заголовок. `/source/*` и `/inbox/upload`: **обязателен** (пустой = `401`) |
 | `SOURCE_MAX_BYTES` | `4294967296` (4 ГиБ) | Потолок размера для `/source/fetch`; запрос не может его превысить |
 | `SOURCE_TIMEOUT_SEC` | `30` | Таймаут сокета (соединение и чтение) для `/source/*`, минимум 5 |
+| `SOURCE_FETCH_MAX_SEC` | `3300` | Общий дедлайн одного `/source/fetch` (open + чтение), минимум 1 |
+| `SOURCE_MIN_BYTES_PER_MIN` | `65536` (64 КиБ) | Минимум байт за 60 с чтения; иначе `504 timeout` |
 | `INBOX_UPLOAD_MAX_BYTES` | `26214400` (25 МБ) | Потолок тела `/inbox/upload` |
 | `SOURCE_YANDEX_API_BASE` | `https://cloud-api.yandex.net` | Меняется только в тестах |
 | `SOURCE_GDRIVE_BASE` | `https://drive.google.com` | Меняется только в тестах |

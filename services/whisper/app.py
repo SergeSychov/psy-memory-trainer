@@ -83,10 +83,12 @@ DRIVE_FILE_FIELDS = (
 DOWNLOAD_CHUNK = 1024 * 1024
 IDLE_POLL_SEC = 15
 SOURCE_PROBE_TIMEOUT_SEC = 30
+SOURCE_PROBE_MAX_CONCURRENT = 3
 INBOX_DIR = "inbox"
 INBOX_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 _job = threading.Lock()
+_probe_slots = threading.Semaphore(SOURCE_PROBE_MAX_CONCURRENT)
 _model = None
 _model_key: tuple[str, str, str] | None = None
 _last_activity = time.monotonic()
@@ -121,6 +123,8 @@ class Settings(BaseModel):
     prompts_file: Path | None
     source_max_bytes: int = 4 * 1024**3
     source_timeout_sec: int = 30
+    source_fetch_max_sec: int = 3300
+    source_min_bytes_per_min: int = 64 * 1024
     inbox_upload_max_bytes: int = 25 * 1024 * 1024
     source_yandex_api_base: str = "https://cloud-api.yandex.net"
     source_gdrive_base: str = "https://drive.google.com"
@@ -265,6 +269,8 @@ def load_settings(env: dict[str, str] | None = None) -> Settings:
         prompts_file=_prompts_path(env),
         source_max_bytes=max(1, _env_int("SOURCE_MAX_BYTES", 4 * 1024**3, env)),
         source_timeout_sec=max(5, _env_int("SOURCE_TIMEOUT_SEC", 30, env)),
+        source_fetch_max_sec=max(1, _env_int("SOURCE_FETCH_MAX_SEC", 3300, env)),
+        source_min_bytes_per_min=max(1, _env_int("SOURCE_MIN_BYTES_PER_MIN", 64 * 1024, env)),
         inbox_upload_max_bytes=max(1, _env_int("INBOX_UPLOAD_MAX_BYTES", 25 * 1024 * 1024, env)),
         source_yandex_api_base=_env("SOURCE_YANDEX_API_BASE", "https://cloud-api.yandex.net", env).rstrip("/"),
         source_gdrive_base=_env("SOURCE_GDRIVE_BASE", "https://drive.google.com", env).rstrip("/"),
@@ -440,6 +446,19 @@ def require_token(
     raise HTTPException(401, "unauthorized")
 
 
+def require_token_strict(
+    authorization: str | None = Header(default=None),
+    x_whisper_token: str | None = Header(default=None),
+) -> None:
+    """Для /source/* и /inbox/upload: без WHISPER_TOKEN в env — отказ (не «открыто»)."""
+    expected = os.environ.get("WHISPER_TOKEN", "").strip()
+    if not expected:
+        raise HTTPException(401, "unauthorized")
+    if authorization == f"Bearer {expected}" or x_whisper_token == expected:
+        return
+    raise HTTPException(401, "unauthorized")
+
+
 def google_token(authorization: str | None = Header(default=None)) -> str:
     """Токен доступа Google приходит в Authorization: его подставляет n8n
     из своего credential Google Drive. Сервис его не хранит и не логирует."""
@@ -474,12 +493,15 @@ def probe_audio(path: Path) -> dict[str, object]:
             "ffprobe",
             "-v",
             "error",
+            "-protocol_whitelist",
+            "file,pipe",
             "-print_format",
             "json",
             "-show_streams",
             "-show_format",
             "-select_streams",
             "a:0",
+            "-i",
             str(path),
         ],
         capture_output=True,
@@ -516,6 +538,8 @@ def extract_audio(src: Path, dst: Path, timeout_sec: int) -> dict[str, object]:
         "-loglevel",
         "error",
         "-y",
+        "-protocol_whitelist",
+        "file,pipe",
         "-i",
         str(src),
         "-vn",
@@ -1203,6 +1227,8 @@ def source_config(settings: Settings) -> sources.SourceConfig:
     return sources.SourceConfig(
         timeout_sec=float(settings.source_timeout_sec),
         probe_timeout_sec=float(SOURCE_PROBE_TIMEOUT_SEC),
+        fetch_max_sec=float(settings.source_fetch_max_sec),
+        min_bytes_per_min=int(settings.source_min_bytes_per_min),
         yandex_api_base=settings.source_yandex_api_base,
         gdrive_base=settings.source_gdrive_base,
         min_free_mb=settings.min_free_mb,
@@ -1222,21 +1248,29 @@ def resolve_inbox_path(raw: str, data_dir: Path, *, flat: bool) -> Path:
     return dst
 
 
-@app.post("/source/probe", dependencies=[Depends(require_token)])
+@app.post("/source/probe", dependencies=[Depends(require_token_strict)])
 def source_probe_route(body: SourceProbeRequest) -> dict[str, object]:
-    """Лёгкая проба. Общий job-lock НЕ занимает: идёт параллельно с распознаванием."""
-    settings = load_settings()
+    """Лёгкая проба. Общий job-lock НЕ занимает; одновременно не больше SOURCE_PROBE_MAX_CONCURRENT."""
+    if not _probe_slots.acquire(blocking=False):
+        raise HTTPException(409, "busy")
     try:
-        if body.path is not None:
-            src = resolve_data_path(body.path, settings.data_dir, must_exist=True)
-            return sources.probe_file(src)
-        assert body.kind is not None and body.url is not None
-        return sources.probe_url(body.kind, body.url, source_config(settings), source_policy())
-    except safe_http.SourceError as exc:
-        raise HTTPException(exc.status, exc.code) from None
+        settings = load_settings()
+        try:
+            if body.path is not None:
+                # Только inbox/: не даём щупать произвольные пути в /data.
+                src = resolve_inbox_path(body.path, settings.data_dir, flat=False)
+                if not src.is_file():
+                    raise HTTPException(404, "file not found")
+                return sources.probe_file(src)
+            assert body.kind is not None and body.url is not None
+            return sources.probe_url(body.kind, body.url, source_config(settings), source_policy())
+        except safe_http.SourceError as exc:
+            raise HTTPException(exc.status, exc.code) from None
+    finally:
+        _probe_slots.release()
 
 
-@app.post("/source/fetch", dependencies=[Depends(require_token)])
+@app.post("/source/fetch", dependencies=[Depends(require_token_strict)])
 def source_fetch_route(body: SourceFetchRequest) -> dict[str, object]:
     settings = load_settings()
     dst = resolve_inbox_path(body.output_path, settings.data_dir, flat=False)
@@ -1259,7 +1293,7 @@ def source_fetch_route(body: SourceFetchRequest) -> dict[str, object]:
         end_job()
 
 
-@app.post("/inbox/upload", dependencies=[Depends(require_token)])
+@app.post("/inbox/upload", dependencies=[Depends(require_token_strict)])
 async def inbox_upload_route(
     request: Request, path: str = Query(min_length=1, max_length=4096)
 ) -> dict[str, object]:
@@ -1287,6 +1321,11 @@ async def inbox_upload_route(
         if written == 0:
             raise HTTPException(400, "empty body")
         os.replace(part, dst)
+        # Отсечь playlist/image-контейнеры после записи (MIME мог врать).
+        sources.reject_unsafe_container(dst)
+    except safe_http.SourceError as exc:
+        dst.unlink(missing_ok=True)
+        raise HTTPException(exc.status, exc.code) from None
     except OSError as exc:
         raise HTTPException(500, "write failed") from exc
     finally:

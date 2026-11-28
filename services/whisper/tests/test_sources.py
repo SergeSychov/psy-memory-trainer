@@ -13,6 +13,7 @@ import shutil
 import ssl
 import subprocess
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -30,6 +31,8 @@ PRIVATE_ID = "private0001"
 BIG_ID = "bigfile0001"
 OK_ID = "publicfile1"
 MISSING_ID = "missing0001"
+TEST_TOKEN = "test-token"
+AUTH = {"Authorization": f"Bearer {TEST_TOKEN}"}
 
 RESOLVE = {
     "ok.test": ["127.0.0.1"],
@@ -107,6 +110,26 @@ def make_handler(state):
                 return self._send(200, b"", "audio/mpeg")
             if path == "/forbidden":
                 return self._send(403, b"no", "text/plain")
+            if path == "/gone":
+                return self._send(410, b"gone", "text/plain")
+            if path == "/missing-file":
+                return self._send(404, b"nf", "text/plain")
+            if path == "/playlist.m3u8":
+                return self._send(200, b"#EXTM3U\n", "application/vnd.apple.mpegurl")
+            if path == "/slow":
+                # Мало байт за окно скорости — для теста too_slow.
+                self.send_response(200)
+                self.send_header("Content-Type", "audio/mpeg")
+                self.send_header("Content-Length", "200000")
+                self.end_headers()
+                try:
+                    for _ in range(40):
+                        self.wfile.write(b"x" * 50)
+                        self.wfile.flush()
+                        time.sleep(0.15)
+                except BrokenPipeError:
+                    pass
+                return
             if path == "/boom":
                 return self._send(500, b"no", "text/plain")
             if path == "/uc":  # Google Drive «по ссылке»
@@ -180,7 +203,8 @@ def data_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(root))
     monkeypatch.setenv("WHISPER_IDLE_EXIT_SEC", "0")
     monkeypatch.setenv("WHISPER_MIN_FREE_MB", "0")
-    monkeypatch.delenv("WHISPER_TOKEN", raising=False)
+    # Новые ручки требуют WHISPER_TOKEN (require_token_strict).
+    monkeypatch.setenv("WHISPER_TOKEN", TEST_TOKEN)
     return root
 
 
@@ -202,14 +226,20 @@ def gdrive(file_id=OK_ID):
     return f"https://drive.google.com/file/d/{file_id}/view?usp=sharing"
 
 
-def fetch(client, kind, url, out="inbox/l1.mp3", max_bytes=10**7):
+def fetch(client, kind, url, out="inbox/l1.mp3", max_bytes=10**7, headers=None):
     return client.post(
-        "/source/fetch", json={"kind": kind, "url": url, "output_path": out, "max_bytes": max_bytes}
+        "/source/fetch",
+        json={"kind": kind, "url": url, "output_path": out, "max_bytes": max_bytes},
+        headers=headers if headers is not None else AUTH,
     )
 
 
-def probe(client, kind, url):
-    return client.post("/source/probe", json={"kind": kind, "url": url})
+def probe(client, kind, url, headers=None):
+    return client.post(
+        "/source/probe",
+        json={"kind": kind, "url": url},
+        headers=headers if headers is not None else AUTH,
+    )
 
 
 # --- /source/probe ------------------------------------------------------------------
@@ -341,13 +371,17 @@ def test_probe_local_file(client, data_dir, monkeypatch):
     monkeypatch.setattr(sources, "ffprobe_json", lambda **_k: {"format": {"duration": "3.0"}, "streams": []})
     (data_dir / "inbox").mkdir()
     (data_dir / "inbox" / "a.mp3").write_bytes(BLOB)
-    body = client.post("/source/probe", json={"path": "inbox/a.mp3"}).json()
+    body = client.post("/source/probe", json={"path": "inbox/a.mp3"}, headers=AUTH).json()
     assert body["name"] == "a.mp3"
     assert body["size_bytes"] == len(BLOB)
     assert body["duration_sec"] == 3.0
     assert body["resolved_kind"] == "audio"
-    assert client.post("/source/probe", json={"path": "inbox/none.mp3"}).status_code == 404
-    assert client.post("/source/probe", json={"path": "/etc/passwd"}).status_code == 400
+    assert client.post("/source/probe", json={"path": "inbox/none.mp3"}, headers=AUTH).status_code == 404
+    assert client.post("/source/probe", json={"path": "/etc/passwd"}, headers=AUTH).status_code == 400
+    # S1: путь вне inbox/ запрещён (даже если файл есть в /data).
+    (data_dir / "outside.mp3").write_bytes(BLOB)
+    assert client.post("/source/probe", json={"path": "outside.mp3"}, headers=AUTH).status_code == 400
+    assert client.post("/source/probe", json={"path": "audio/x.mp3"}, headers=AUTH).status_code == 400
 
 
 @pytest.mark.parametrize(
@@ -361,7 +395,7 @@ def test_probe_local_file(client, data_dir, monkeypatch):
     ],
 )
 def test_probe_rejects_bad_body(client, payload):
-    assert client.post("/source/probe", json=payload).status_code == 422
+    assert client.post("/source/probe", json=payload, headers=AUTH).status_code == 422
 
 
 # --- /source/fetch ------------------------------------------------------------------
@@ -541,23 +575,44 @@ def test_source_endpoints_require_token(client, web, policy, monkeypatch):
     assert client.post("/inbox/upload?path=inbox/t.bin", content=b"x", headers=bearer).status_code == 200
 
 
+def test_source_endpoints_reject_when_token_unset(client, web, policy, monkeypatch):
+    """B2: require_token_strict — без WHISPER_TOKEN в env новые ручки закрыты."""
+    monkeypatch.delenv("WHISPER_TOKEN", raising=False)
+    url = direct(web, "/files/l.mp3")
+    assert client.post("/source/probe", json={"kind": "direct_url", "url": url}).status_code == 401
+    assert (
+        client.post(
+            "/source/fetch",
+            json={"kind": "direct_url", "url": url, "output_path": "inbox/t.mp3", "max_bytes": 10**7},
+            headers=AUTH,
+        ).status_code
+        == 401
+    )
+    assert client.post("/inbox/upload?path=inbox/t.bin", content=b"x", headers=AUTH).status_code == 401
+    # Старые ручки: без токена в env require_token пропускает (не 401).
+    old = client.post("/extract-audio", json={"input_path": "inbox/missing.mp3"})
+    assert old.status_code != 401
+
+
 # --- /inbox/upload ------------------------------------------------------------------
 
 
-def test_upload_happy_path(client, data_dir):
-    response = client.post("/inbox/upload?path=inbox/voice-1.ogg", content=BLOB)
+def test_upload_happy_path(client, data_dir, monkeypatch):
+    monkeypatch.setattr(sources, "reject_unsafe_container", lambda *_a, **_k: None)
+    response = client.post("/inbox/upload?path=inbox/voice-1.ogg", content=BLOB, headers=AUTH)
     assert response.status_code == 200, response.text
     assert response.json() == {"path": str(data_dir.resolve() / "inbox" / "voice-1.ogg"), "size_bytes": len(BLOB)}
     assert (data_dir / "inbox" / "voice-1.ogg").read_bytes() == BLOB
     assert not (data_dir / "inbox" / "voice-1.ogg.part").exists()
-    again = client.post("/inbox/upload?path=inbox/voice-1.ogg", content=b"new")
+    again = client.post("/inbox/upload?path=inbox/voice-1.ogg", content=b"new", headers=AUTH)
     assert again.status_code == 200
     assert (data_dir / "inbox" / "voice-1.ogg").read_bytes() == b"new"
 
 
 def test_upload_over_limit_by_content_length_and_by_stream(client, data_dir, monkeypatch):
     monkeypatch.setenv("INBOX_UPLOAD_MAX_BYTES", "1000")
-    declared = client.post("/inbox/upload?path=inbox/a.bin", content=b"x" * 1001)
+    monkeypatch.setattr(sources, "reject_unsafe_container", lambda *_a, **_k: None)
+    declared = client.post("/inbox/upload?path=inbox/a.bin", content=b"x" * 1001, headers=AUTH)
     assert declared.status_code == 413
     assert declared.json() == {"error": "too_large"}
 
@@ -565,12 +620,12 @@ def test_upload_over_limit_by_content_length_and_by_stream(client, data_dir, mon
         for _ in range(5):
             yield b"y" * 300
 
-    streamed = client.post("/inbox/upload?path=inbox/b.bin", content=chunks())
+    streamed = client.post("/inbox/upload?path=inbox/b.bin", content=chunks(), headers=AUTH)
     assert streamed.status_code == 413
     assert not (data_dir / "inbox" / "a.bin").exists()
     assert not (data_dir / "inbox" / "b.bin").exists()
     assert not (data_dir / "inbox" / "b.bin.part").exists()
-    assert client.post("/inbox/upload?path=inbox/c.bin", content=b"z" * 1000).status_code == 200
+    assert client.post("/inbox/upload?path=inbox/c.bin", content=b"z" * 1000, headers=AUTH).status_code == 200
 
 
 def test_upload_default_limit_is_25_mb(data_dir):
@@ -582,22 +637,23 @@ def test_upload_default_limit_is_25_mb(data_dir):
     ["x.bin", "audio/x.bin", "inbox/a/b.bin", "inbox/../x.bin", "/etc/x.bin", "inbox", "inbox/.hidden", "inbox/a.part"],
 )
 def test_upload_path_must_be_inbox_name(client, data_dir, path):
-    response = client.post("/inbox/upload", params={"path": path}, content=b"x")
+    response = client.post("/inbox/upload", params={"path": path}, content=b"x", headers=AUTH)
     assert response.status_code == 400
     assert not (data_dir / "x.bin").exists()
 
 
 def test_upload_empty_body_rejected(client, data_dir):
-    response = client.post("/inbox/upload?path=inbox/e.bin", content=b"")
+    response = client.post("/inbox/upload?path=inbox/e.bin", content=b"", headers=AUTH)
     assert response.status_code == 400
     assert not (data_dir / "inbox" / "e.bin").exists()
     assert not (data_dir / "inbox" / "e.bin.part").exists()
 
 
-def test_upload_does_not_take_job_lock(client, data_dir):
+def test_upload_does_not_take_job_lock(client, data_dir, monkeypatch):
+    monkeypatch.setattr(sources, "reject_unsafe_container", lambda *_a, **_k: None)
     app_module.begin_job()
     try:
-        assert client.post("/inbox/upload?path=inbox/l.bin", content=b"x").status_code == 200
+        assert client.post("/inbox/upload?path=inbox/l.bin", content=b"x", headers=AUTH).status_code == 200
     finally:
         app_module.end_job()
 
@@ -785,6 +841,129 @@ def test_https_pinned_connection_verifies_certificate_by_name(client, tls_cert, 
         assert len(state["hits"]) == 1
     finally:
         server.shutdown()
+
+
+# --- B1/B3/S2/S3 --------------------------------------------------------------------
+
+
+def test_fetch_aborts_slow_server_and_releases_lock(client, web, policy, data_dir, monkeypatch):
+    """B1: <64 КБ за окно → timeout; job-lock освобождается."""
+    monkeypatch.setattr(sources, "SPEED_WINDOW_SEC", 0.4)
+    monkeypatch.setenv("SOURCE_MIN_BYTES_PER_MIN", "8000")
+    monkeypatch.setenv("SOURCE_FETCH_MAX_SEC", "30")
+    response = fetch(client, "direct_url", direct(web, "/slow"), out="inbox/slow.mp3")
+    assert response.status_code == 504
+    assert response.json() == {"error": "timeout"}
+    assert not (data_dir / "inbox" / "slow.mp3").exists()
+    assert not (data_dir / "inbox" / "slow.mp3.part").exists()
+    assert client.get("/health").json()["busy"] is False
+
+
+def test_fetch_respects_overall_deadline(client, web, policy, data_dir, monkeypatch):
+    monkeypatch.setenv("SOURCE_FETCH_MAX_SEC", "1")
+    monkeypatch.setattr(sources, "SPEED_WINDOW_SEC", 3600.0)
+    monkeypatch.setenv("SOURCE_MIN_BYTES_PER_MIN", "1")
+    real_read = safe_http.SafeResponse.read
+
+    def delayed_read(self, size):  # type: ignore[no-untyped-def]
+        # Первый же кусок тела «зависает» дольше дедлайна fetch.
+        time.sleep(1.2)
+        return real_read(self, size)
+
+    monkeypatch.setattr(safe_http.SafeResponse, "read", delayed_read)
+    response = fetch(client, "direct_url", direct(web, "/files/l.mp3"), out="inbox/deadline.mp3")
+    assert response.status_code == 504
+    assert response.json() == {"error": "timeout"}
+    assert not (data_dir / "inbox" / "deadline.mp3.part").exists()
+    assert client.get("/health").json()["busy"] is False
+
+
+def test_playlist_mime_rejected(client, web, policy):
+    """B3: playlist MIME → unsupported_type."""
+    for kind_url in (
+        ("direct_url", direct(web, "/playlist.m3u8")),
+    ):
+        response = probe(client, kind_url[0], kind_url[1])
+        assert response.status_code == 400
+        assert response.json() == {"error": "unsupported_type"}
+        response = fetch(client, kind_url[0], kind_url[1], out="inbox/pl.m3u8")
+        assert response.status_code == 400
+        assert response.json() == {"error": "unsupported_type"}
+
+
+@pytest.mark.parametrize(
+    "mime",
+    [
+        "application/vnd.apple.mpegurl",
+        "application/x-mpegurl",
+        "audio/mpegurl",
+        "audio/x-scpls",
+        "application/asx",
+        "video/x-ms-asx",
+        "application/dash+xml",
+    ],
+)
+def test_classify_media_rejects_playlist_mime(mime):
+    with pytest.raises(safe_http.SourceError) as err:
+        sources.classify_media(mime, "x")
+    assert err.value.code == "unsupported_type"
+
+
+def test_reject_unsafe_container_by_format_name():
+    with pytest.raises(safe_http.SourceError) as err:
+        sources.reject_unsafe_container(info={"format": {"format_name": "hls,applehttp"}})
+    assert err.value.code == "unsupported_type"
+    with pytest.raises(safe_http.SourceError):
+        sources.reject_unsafe_container(info={"format": {"format_name": "dash"}})
+    with pytest.raises(safe_http.SourceError):
+        sources.reject_unsafe_container(info={"format": {"format_name": "concat"}})
+    with pytest.raises(safe_http.SourceError):
+        sources.reject_unsafe_container(info={"format": {"format_name": "sdp"}})
+    with pytest.raises(safe_http.SourceError):
+        sources.reject_unsafe_container(info={"format": {"format_name": "image2"}})
+    sources.reject_unsafe_container(info={"format": {"format_name": "mp3"}})
+    sources.reject_unsafe_container(info=None)
+
+
+def test_direct_url_404_410_are_download_failed(client, web, policy):
+    """S3: у direct_url 404/410 → download_failed (не not_public)."""
+    missing = probe(client, "direct_url", direct(web, "/missing-file"))
+    assert missing.status_code == 502
+    assert missing.json() == {"error": "download_failed"}
+    gone = fetch(client, "direct_url", direct(web, "/gone"), out="inbox/gone.mp3")
+    assert gone.status_code == 502
+    assert gone.json() == {"error": "download_failed"}
+
+
+def test_probe_semaphore_limits_concurrency(client, web, policy):
+    """S2: при трёх занятых слотах четвёртая проба → 409 busy; слоты освобождаются."""
+    assert app_module.SOURCE_PROBE_MAX_CONCURRENT == 3
+    held = 0
+    try:
+        while app_module._probe_slots.acquire(blocking=False):
+            held += 1
+        assert held == 3
+        fourth = probe(client, "direct_url", direct(web, "/files/l.mp3"))
+        assert fourth.status_code == 409
+        assert fourth.json() == {"error": "busy"}
+        assert web["hits"] == []
+    finally:
+        for _ in range(held):
+            app_module._probe_slots.release()
+    ok = probe(client, "direct_url", direct(web, "/files/l.mp3"))
+    assert ok.status_code == 200, ok.text
+
+
+def test_protocol_whitelist_in_ffmpeg_helpers():
+    import inspect
+
+    from chunking import window_ffmpeg_args
+
+    win = window_ffmpeg_args("/data/a.wav", 0, 10)
+    assert win[win.index("-protocol_whitelist") + 1] == "file,pipe"
+    assert win.index("-protocol_whitelist") < win.index("-i")
+    assert "file,pipe" in inspect.getsource(app_module.extract_audio)
+    assert "file,pipe" in inspect.getsource(app_module.probe_audio)
 
 
 # --- обратная совместимость ---------------------------------------------------------
