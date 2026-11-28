@@ -925,6 +925,20 @@ def test_reject_unsafe_container_by_format_name():
     sources.reject_unsafe_container(info=None)
 
 
+def test_fetch_deletes_dst_when_format_name_rejected(client, web, policy, data_dir, monkeypatch):
+    """После rename отказ по format_name удаляет целевой файл (не только .part)."""
+
+    def boom(*_a, **_k):
+        raise safe_http.SourceError("unsupported_type", 400, "format")
+
+    monkeypatch.setattr(sources, "reject_unsafe_container", boom)
+    response = fetch(client, "direct_url", direct(web, "/files/l.mp3"), out="inbox/bad.mp3")
+    assert response.status_code == 400
+    assert response.json() == {"error": "unsupported_type"}
+    assert not (data_dir / "inbox" / "bad.mp3").exists()
+    assert not (data_dir / "inbox" / "bad.mp3.part").exists()
+
+
 def test_direct_url_404_410_are_download_failed(client, web, policy):
     """S3: у direct_url 404/410 → download_failed (не not_public)."""
     missing = probe(client, "direct_url", direct(web, "/missing-file"))
@@ -964,6 +978,8 @@ def test_protocol_whitelist_in_ffmpeg_helpers():
     assert win.index("-protocol_whitelist") < win.index("-i")
     assert "file,pipe" in inspect.getsource(app_module.extract_audio)
     assert "file,pipe" in inspect.getsource(app_module.probe_audio)
+    assert "file,pipe" in inspect.getsource(app_module.decode_for_model)
+    assert "file,pipe" in inspect.getsource(app_module.detect_silences)
 
 
 # --- обратная совместимость ---------------------------------------------------------

@@ -428,7 +428,12 @@ def fetch_url(
         if written == 0:
             raise SourceError("download_failed", 502, "empty_body")
         os.replace(part, dst)
-        reject_unsafe_container(dst)
+        try:
+            reject_unsafe_container(dst)
+        except SourceError:
+            # После rename отказ по format_name не должен оставлять файл в inbox.
+            dst.unlink(missing_ok=True)
+            raise
     except OSError:
         raise SourceError("download_failed", 502, "write_failed") from None
     finally:
