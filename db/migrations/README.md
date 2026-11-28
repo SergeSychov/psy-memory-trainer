@@ -13,6 +13,7 @@ SQL-миграции Postgres/Supabase (pgvector). В kickoff каталог н�
 | [`0005_glossary_definition_source.sql`](0005_glossary_definition_source.sql) | `glossary_terms.definition_source` (`lecture`\|`textbook`\|NULL); непустые → `lecture` — **не применять без «да»** |
 | [`0006_quiz_sessions.sql`](0006_quiz_sessions.sql) | `quiz_sessions` + `reviews.response_ms`/`session_id` |
 | [`0007_workspaces_invites.sql`](0007_workspaces_invites.sql) | `workspaces`, `course_members`, `invites`, `users.is_system_admin`, `courses.workspace_id` + backfill — **не применять без ок**; применять один раз: `psql -v ON_ERROR_STOP=1 -f` |
+| [`0008_lecture_sources_quota.sql`](0008_lecture_sources_quota.sql) | шаг 2: `user_identities` (+backfill, триггер, `resolve_identity`), `users.telegram_user_id` nullable, `lectures.media_kind` + `text`, `lecture_requests`, `quota_ledger`, `intake_sessions`, `outbox`, функции `create/confirm/cancel/refund_lecture_request`, `finalize_pending_requests`, `workspace_quota_remaining`, `queue_position` — **не применять без ок**; применять один раз: `psql -v ON_ERROR_STOP=1 -f`; SQL-тест: `tests/sql/step2_quota.sql` |
 
 `CREATE EXTENSION` нет: `pgcrypto` / `uuid-ossp` / `vector` уже в `extensions`. Колонки embedding нет.
 
