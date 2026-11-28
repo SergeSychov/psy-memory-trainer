@@ -1,11 +1,19 @@
 # Прод-раскладка на сервере Dokploy (вне приложений Dokploy, отдельный compose-проект):
 #   /opt/psy-whisper/docker-compose.yml  <- этот файл
-#   /opt/psy-whisper/src/                <- Dockerfile, app.py, requirements.txt
-#   /opt/psy-whisper/data/               <- общий каталог медиа (inbox/, audio/)
-#   /opt/psy-whisper/.env                <- WHISPER_TOKEN=... (chmod 600, в git не класть)
+#   /opt/psy-whisper/src/                <- ВСЕ файлы из Dockerfile COPY:
+#        Dockerfile, requirements.txt, app.py, chunking.py, safe_http.py, sources.py
+#   /opt/psy-whisper/data/               <- медиа (inbox/, audio/); общий volume контейнера
+#   /opt/psy-whisper/.env                <- WHISPER_TOKEN=... обязателен и непустой
+#                                          (chmod 600, в git не класть; значение не логировать)
 #   /opt/psy-whisper/prompts/courses.json <- списки курсов (chmod 600, в git не класть)
 #     пустой шаблон: services/whisper/prompts.example.json
 #     каталог создать ДО первого up, иначе Docker создаст его сам от root
+#
+# Деплой (после отдельного «ок» владельца):
+#   1) docker tag psy-whisper:local psy-whisper:pre-step2 && cp -a src src.pre-step2
+#   2) дождаться /health busy=false
+#   3) скопировать все файлы COPY из Dockerfile в src/, docker compose build && up -d
+#   4) смоук: GET /health; POST /source/probe (с токеном) на синтетике; старый /extract-audio
 #
 # Контейнер живёт постоянно: после WHISPER_IDLE_UNLOAD_SEC простоя модель
 # выгружается из RAM, процесс остаётся. У n8n нет docker.sock и SSH к хосту,

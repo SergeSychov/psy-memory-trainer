@@ -12,7 +12,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: node --test fsrs/fsrs.test.js prompts/prompts.test.js n8n/lib/validate_questions.test.js n8n/lib/subtopic_questions.test.js n8n/lib/quiz_session.test.js
+      - run: >-
+          node --test
+          fsrs/fsrs.test.js
+          prompts/prompts.test.js
+          n8n/lib/validate_questions.test.js
+          n8n/lib/subtopic_questions.test.js
+          n8n/lib/quiz_session.test.js
+          n8n/lib/source_links.test.js
+          n8n/lib/channel_core.test.js
+          n8n/lib/lecture_intake.test.js
+          n8n/lib/migration_0008.test.js
 
   whisper:
     runs-on: ubuntu-latest
@@ -29,3 +39,86 @@ jobs:
         env:
           HF_HUB_DISABLE_TELEMETRY: "1"
         run: python -m pytest services/whisper/tests -q
+
+  db:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: psy_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d psy_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: psy_ci
+    steps:
+      - uses: actions/checkout@v4
+      - name: prepare extensions schema and psy_n8n role
+        run: |
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE SCHEMA IF NOT EXISTS extensions;
+          CREATE OR REPLACE FUNCTION extensions.gen_random_uuid()
+          RETURNS uuid
+          LANGUAGE sql
+          AS $$ SELECT gen_random_uuid(); $$;
+
+          DO $$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'psy_n8n') THEN
+              CREATE ROLE psy_n8n LOGIN PASSWORD 'ci_n8n';
+            END IF;
+          END;
+          $$;
+
+          GRANT USAGE ON SCHEMA public TO psy_n8n;
+          REVOKE ALL ON SCHEMA extensions FROM PUBLIC;
+          REVOKE ALL ON SCHEMA extensions FROM psy_n8n;
+          SQL
+      - name: apply migrations with synthetic users for 0007
+        run: |
+          set -euo pipefail
+          for f in db/migrations/0001_init.sql \
+                   db/migrations/0002_llm_versions_and_term_examples.sql \
+                   db/migrations/0003_questions_superseded.sql \
+                   db/migrations/0004_questions_thesis_nullable_term.sql \
+                   db/migrations/0005_glossary_definition_source.sql \
+                   db/migrations/0006_quiz_sessions.sql; do
+            echo "=== $f ==="
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+          # 0007 backfill requires exactly one Сергей and one Наталья.
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO psy.users (telegram_user_id, display_name)
+          VALUES
+            (100000001, 'Сергей'),
+            (100000002, 'Наталья')
+          ON CONFLICT (telegram_user_id) DO NOTHING;
+          SQL
+
+          echo "=== db/migrations/0007_workspaces_invites.sql ==="
+          psql -v ON_ERROR_STOP=1 -f db/migrations/0007_workspaces_invites.sql
+
+          echo "=== db/migrations/0008_lecture_sources_quota.sql ==="
+          psql -v ON_ERROR_STOP=1 -f db/migrations/0008_lecture_sources_quota.sql
+
+          # DML grants for CI role (migrations grant IF role exists; ensure schema USAGE).
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          GRANT USAGE ON SCHEMA psy TO psy_n8n;
+          GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA psy TO psy_n8n;
+          GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA psy TO psy_n8n;
+          GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA psy TO psy_n8n;
+          SQL
+      - name: SQL quota tests under psy_n8n
+        run: psql -v ON_ERROR_STOP=1 -f tests/sql/step2_quota.sql

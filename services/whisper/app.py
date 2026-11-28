@@ -3,6 +3,9 @@
 n8n ffmpeg не содержит, поэтому и нарезка, и распознавание живут здесь.
 Файлы не загружаются через HTTP: вызывающий и контейнер видят один каталог DATA_DIR.
 Большие лекции сервис качает из Google Drive сам (/drive/fetch), n8n видео в память не берёт.
+Публичные ссылки (Яндекс Диск, Drive «по ссылке», прямой https) обслуживают /source/probe
+и /source/fetch (sources.py + safe_http.py, с защитой от SSRF); малые файлы из чата
+принимает /inbox/upload.
 Модель в память попадает на первом /transcribe и выгружается после простоя
 (WHISPER_IDLE_UNLOAD_SEC). Процесс при этом живёт дальше.
 Длинный файл в модель целиком не отдаётся: распознавание идёт окнами
@@ -22,6 +25,7 @@ import gc
 import hashlib
 import json
 import logging
+import re
 import shutil
 import signal
 import subprocess
@@ -32,6 +36,7 @@ import urllib.parse
 import urllib.request
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 
 from chunking import (
     DEFAULT_HALLUCINATION_PHRASES,
@@ -45,10 +50,13 @@ from chunking import (
     plan_pieces,
     window_ffmpeg_args,
 )
-from fastapi import Depends, FastAPI, Header, HTTPException
+import safe_http
+import sources
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 log = logging.getLogger("psy.whisper")
 
@@ -74,8 +82,13 @@ DRIVE_FILE_FIELDS = (
 )
 DOWNLOAD_CHUNK = 1024 * 1024
 IDLE_POLL_SEC = 15
+SOURCE_PROBE_TIMEOUT_SEC = 30
+SOURCE_PROBE_MAX_CONCURRENT = 3
+INBOX_DIR = "inbox"
+INBOX_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 _job = threading.Lock()
+_probe_slots = threading.Semaphore(SOURCE_PROBE_MAX_CONCURRENT)
 _model = None
 _model_key: tuple[str, str, str] | None = None
 _last_activity = time.monotonic()
@@ -108,6 +121,13 @@ class Settings(BaseModel):
     hallucination_silence_sec: float | None
     hallucination_phrases: tuple[str, ...]
     prompts_file: Path | None
+    source_max_bytes: int = 4 * 1024**3
+    source_timeout_sec: int = 30
+    source_fetch_max_sec: int = 3300
+    source_min_bytes_per_min: int = 64 * 1024
+    inbox_upload_max_bytes: int = 25 * 1024 * 1024
+    source_yandex_api_base: str = "https://cloud-api.yandex.net"
+    source_gdrive_base: str = "https://drive.google.com"
 
 
 class ExtractRequest(BaseModel):
@@ -128,6 +148,32 @@ class DriveListRequest(BaseModel):
 class DriveFetchRequest(BaseModel):
     file_id: str = Field(pattern=DRIVE_ID_PATTERN)
     output_path: str = Field(min_length=1, max_length=4096)
+
+
+SourceKind = Literal["yandex_public", "gdrive_public", "direct_url"]
+
+
+class SourceProbeRequest(BaseModel):
+    kind: SourceKind | None = None
+    url: str | None = Field(default=None, min_length=1, max_length=safe_http.MAX_URL_LEN)
+    path: str | None = Field(default=None, min_length=1, max_length=4096)
+
+    @model_validator(mode="after")
+    def _kind_url_or_path(self) -> "SourceProbeRequest":
+        by_url = self.kind is not None and self.url is not None
+        if self.path is not None:
+            if self.kind is not None or self.url is not None:
+                raise ValueError("path excludes kind and url")
+        elif not by_url:
+            raise ValueError("kind and url, or path, required")
+        return self
+
+
+class SourceFetchRequest(BaseModel):
+    kind: SourceKind
+    url: str = Field(min_length=1, max_length=safe_http.MAX_URL_LEN)
+    output_path: str = Field(min_length=1, max_length=4096)
+    max_bytes: int = Field(ge=1, le=2**40)
 
 
 class TranscribeRequest(BaseModel):
@@ -221,6 +267,13 @@ def load_settings(env: dict[str, str] | None = None) -> Settings:
         hallucination_silence_sec=_silence_threshold(env),
         hallucination_phrases=_hallucination_phrases(env),
         prompts_file=_prompts_path(env),
+        source_max_bytes=max(1, _env_int("SOURCE_MAX_BYTES", 4 * 1024**3, env)),
+        source_timeout_sec=max(5, _env_int("SOURCE_TIMEOUT_SEC", 30, env)),
+        source_fetch_max_sec=max(1, _env_int("SOURCE_FETCH_MAX_SEC", 3300, env)),
+        source_min_bytes_per_min=max(1, _env_int("SOURCE_MIN_BYTES_PER_MIN", 64 * 1024, env)),
+        inbox_upload_max_bytes=max(1, _env_int("INBOX_UPLOAD_MAX_BYTES", 25 * 1024 * 1024, env)),
+        source_yandex_api_base=_env("SOURCE_YANDEX_API_BASE", "https://cloud-api.yandex.net", env).rstrip("/"),
+        source_gdrive_base=_env("SOURCE_GDRIVE_BASE", "https://drive.google.com", env).rstrip("/"),
     )
 
 
@@ -393,6 +446,19 @@ def require_token(
     raise HTTPException(401, "unauthorized")
 
 
+def require_token_strict(
+    authorization: str | None = Header(default=None),
+    x_whisper_token: str | None = Header(default=None),
+) -> None:
+    """Для /source/* и /inbox/upload: без WHISPER_TOKEN в env — отказ (не «открыто»)."""
+    expected = os.environ.get("WHISPER_TOKEN", "").strip()
+    if not expected:
+        raise HTTPException(401, "unauthorized")
+    if authorization == f"Bearer {expected}" or x_whisper_token == expected:
+        return
+    raise HTTPException(401, "unauthorized")
+
+
 def google_token(authorization: str | None = Header(default=None)) -> str:
     """Токен доступа Google приходит в Authorization: его подставляет n8n
     из своего credential Google Drive. Сервис его не хранит и не логирует."""
@@ -427,12 +493,15 @@ def probe_audio(path: Path) -> dict[str, object]:
             "ffprobe",
             "-v",
             "error",
+            "-protocol_whitelist",
+            "file,pipe",
             "-print_format",
             "json",
             "-show_streams",
             "-show_format",
             "-select_streams",
             "a:0",
+            "-i",
             str(path),
         ],
         capture_output=True,
@@ -469,6 +538,8 @@ def extract_audio(src: Path, dst: Path, timeout_sec: int) -> dict[str, object]:
         "-loglevel",
         "error",
         "-y",
+        "-protocol_whitelist",
+        "file,pipe",
         "-i",
         str(src),
         "-vn",
@@ -731,6 +802,8 @@ def decode_for_model(path: Path, max_seconds: int) -> tuple[object, float]:
             "-hide_banner",
             "-loglevel",
             "error",
+            "-protocol_whitelist",
+            "file,pipe",
             "-i",
             str(path),
             "-ac",
@@ -789,6 +862,8 @@ def detect_silences(path: Path, settings: Settings, duration: float) -> list[tup
         "-hide_banner",
         "-nostats",
         "-nostdin",
+        "-protocol_whitelist",
+        "file,pipe",
         "-i",
         str(path),
         "-vn",
@@ -1141,3 +1216,124 @@ def drive_fetch_route(body: DriveFetchRequest, token: str = Depends(google_token
         float(result["elapsed_sec"]),
     )
     return result
+
+
+# --- Источники по ссылке и файлы из чата -------------------------------------------
+# Защита: WHISPER_TOKEN (как у /extract-audio). Лог: короткий хеш и размер, без URL и имён.
+
+
+def source_policy() -> safe_http.Policy:
+    """Строгая SSRF-политика. Подменяется только в тестах."""
+    return safe_http.STRICT
+
+
+def source_config(settings: Settings) -> sources.SourceConfig:
+    return sources.SourceConfig(
+        timeout_sec=float(settings.source_timeout_sec),
+        probe_timeout_sec=float(SOURCE_PROBE_TIMEOUT_SEC),
+        fetch_max_sec=float(settings.source_fetch_max_sec),
+        min_bytes_per_min=int(settings.source_min_bytes_per_min),
+        yandex_api_base=settings.source_yandex_api_base,
+        gdrive_base=settings.source_gdrive_base,
+        min_free_mb=settings.min_free_mb,
+    )
+
+
+def resolve_inbox_path(raw: str, data_dir: Path, *, flat: bool) -> Path:
+    """Запись по ссылке и из чата идёт только в <DATA_DIR>/inbox."""
+    dst = resolve_data_path(raw, data_dir, must_exist=False)
+    inbox = data_dir.resolve() / INBOX_DIR
+    if not dst.is_relative_to(inbox) or dst == inbox:
+        raise HTTPException(400, "path must be inside inbox")
+    if flat and dst.parent != inbox:
+        raise HTTPException(400, "path must be inbox/<name>")
+    if not INBOX_NAME.match(dst.name) or dst.name.endswith(".part"):
+        raise HTTPException(400, "invalid file name")
+    return dst
+
+
+@app.post("/source/probe", dependencies=[Depends(require_token_strict)])
+def source_probe_route(body: SourceProbeRequest) -> dict[str, object]:
+    """Лёгкая проба. Общий job-lock НЕ занимает; одновременно не больше SOURCE_PROBE_MAX_CONCURRENT."""
+    if not _probe_slots.acquire(blocking=False):
+        raise HTTPException(409, "busy")
+    try:
+        settings = load_settings()
+        try:
+            if body.path is not None:
+                # Только inbox/: не даём щупать произвольные пути в /data.
+                src = resolve_inbox_path(body.path, settings.data_dir, flat=False)
+                if not src.is_file():
+                    raise HTTPException(404, "file not found")
+                return sources.probe_file(src)
+            assert body.kind is not None and body.url is not None
+            return sources.probe_url(body.kind, body.url, source_config(settings), source_policy())
+        except safe_http.SourceError as exc:
+            raise HTTPException(exc.status, exc.code) from None
+    finally:
+        _probe_slots.release()
+
+
+@app.post("/source/fetch", dependencies=[Depends(require_token_strict)])
+def source_fetch_route(body: SourceFetchRequest) -> dict[str, object]:
+    settings = load_settings()
+    dst = resolve_inbox_path(body.output_path, settings.data_dir, flat=False)
+    limit = min(body.max_bytes, settings.source_max_bytes)
+    begin_job()
+    try:
+        return sources.fetch_url(
+            body.kind,
+            body.url,
+            dst,
+            limit,
+            source_config(settings),
+            source_policy(),
+            disk_free_mb=disk_free_mb,
+            touch=touch_activity,
+        )
+    except safe_http.SourceError as exc:
+        raise HTTPException(exc.status, exc.code) from None
+    finally:
+        end_job()
+
+
+@app.post("/inbox/upload", dependencies=[Depends(require_token_strict)])
+async def inbox_upload_route(
+    request: Request, path: str = Query(min_length=1, max_length=4096)
+) -> dict[str, object]:
+    """Сырое тело в inbox/<имя>. Лимит INBOX_UPLOAD_MAX_BYTES (25 МБ), стрим на диск."""
+    settings = load_settings()
+    dst = resolve_inbox_path(path, settings.data_dir, flat=True)
+    limit = settings.inbox_upload_max_bytes
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > limit:
+        raise HTTPException(413, "too_large")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if disk_free_mb(dst.parent) < settings.min_free_mb + limit // (1024 * 1024):
+        raise HTTPException(507, "not enough disk space")
+    part = dst.with_name(dst.name + ".part")
+    written = 0
+    try:
+        with part.open("wb") as out:
+            async for chunk in request.stream():
+                if not chunk:
+                    continue
+                written += len(chunk)
+                if written > limit:
+                    raise HTTPException(413, "too_large")
+                await run_in_threadpool(out.write, chunk)
+        if written == 0:
+            raise HTTPException(400, "empty body")
+        os.replace(part, dst)
+        # Отсечь playlist/image-контейнеры после записи (MIME мог врать).
+        sources.reject_unsafe_container(dst)
+    except safe_http.SourceError as exc:
+        dst.unlink(missing_ok=True)
+        raise HTTPException(exc.status, exc.code) from None
+    except OSError as exc:
+        raise HTTPException(500, "write failed") from exc
+    finally:
+        part.unlink(missing_ok=True)
+    touch_activity()
+    log.info("inbox upload tag=%s bytes=%s", path_tag(dst), written)
+    return {"path": str(dst), "size_bytes": written}

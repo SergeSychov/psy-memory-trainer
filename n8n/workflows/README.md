@@ -113,3 +113,7 @@ JSON-экспорт и `.id` файлы. Деплой: `python3 n8n/scripts/pull
 | Зависимость | миграции `0006_quiz_sessions.sql`, `0007_workspaces_invites.sql` |
 | Версия | `psy_08_telegram_quiz_v2`; экспорт: `python3 n8n/scripts/build_psy_08_telegram_quiz.py --local` (без webhookId) |
 | Активация | только этот workflow; импорт с сохранением active (как в PR #17); перед activate — `getWebhookInfo` |
+
+## Шаг 2 (загрузка лекции) — библиотеки готовы, workflow в PR-B
+
+Чистые функции (без n8n/DB): `n8n/lib/source_links.js`, `channel_core.js`, `lecture_intake.js`. Миграция `0008_lecture_sources_quota.sql` и эндпоинты whisper `/source/probe`, `/source/fetch`, `/inbox/upload` — в PR-A. Workflow `psy_09_lecture_core`, `psy_10_pipeline_dispatcher`, патч `psy_02` и адаптер `/new` в `psy_08` — **отдельный PR-B**, после «ок» на миграцию и деплой whisper. Пока `psy_08` поведение квиза не меняется.
